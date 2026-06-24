@@ -75,6 +75,28 @@ See [`src/index.d.ts`](src/index.d.ts) for full TypeScript types.
 | `NO_BUNDLE` | No bundle stored; sync first |
 | `UNSUPPORTED` | Browser lacks required crypto APIs |
 
+## Security model
+
+**What the client guarantees**:
+- Any modification to the bundle (identity records, proofs, expiry, validator set) is detected — ed25519 signatures cover the full canonical payload.
+- A MITM who intercepts the bundle fetch cannot forge a replacement bundle without the validators' private keys. The worst they can do is block fetches or serve an old-but-valid bundle.
+- The `bundleEndpoint` must use HTTPS (localhost is the only plain-HTTP exception). The constructor throws if this is violated.
+- Signature quorum is fail-closed: if the stored bundle has no recorded valid-signature count, `verify()` returns `QUORUM_FAILURE` rather than proceeding.
+
+**Revocation and the BFF boundary**:
+
+In a typical deployment the browser talks to a Backend-for-Frontend (BFF), not directly to external services. The BFF is always online and should perform its own server-side verification (using the Python `decpki` library) on every request that matters. If an identity has been revoked, the BFF rejects the request — the browser's cached bundle state is irrelevant to enforcement.
+
+Browser-side verification serves a different purpose: **UX awareness when the BFF is unreachable** (airplane mode, field work, loss of connectivity). It lets the UI show the user their identity status without a round-trip, but it is not the security boundary.
+
+```
+Browser ←── verify() ──→ cached bundle   (UX, offline awareness)
+Browser ←──────────────→ BFF             (enforcement, always fresh)
+BFF     ←──────────────→ PKI server      (server-side verify, short-lived cache)
+```
+
+The revocation lag (max = bundle validity period) only applies in the genuine offline case — when the BFF itself is unreachable. For most applications this is an acceptable edge case; the BFF remains the authoritative enforcement point.
+
 ## Bundle sync
 
 The Service Worker automatically syncs when:

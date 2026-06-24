@@ -11,8 +11,12 @@ export class DecPKIClient {
     if (!config || !config.bundleEndpoint) {
       throw new Error('DecPKIClient requires config.bundleEndpoint');
     }
+    const endpoint = config.bundleEndpoint;
+    if (!endpoint.startsWith('https://') && !endpoint.startsWith('http://localhost') && !endpoint.startsWith('http://127.0.0.1')) {
+      throw new Error('bundleEndpoint must use HTTPS (http:// is only permitted for localhost)');
+    }
     this._config = {
-      bundleEndpoint: config.bundleEndpoint,
+      bundleEndpoint: endpoint,
       swPath: config.swPath || '/decpki-sw.js',
       swScope: config.swScope || '/',
     };
@@ -99,13 +103,14 @@ export class DecPKIClient {
       };
     }
 
-    // Quorum check — _validSigCount is set by validateBundle during sync
-    if (typeof bundle._validSigCount === 'number' && bundle._validSigCount < bundle.threshold) {
+    // Quorum check — fail closed if _validSigCount is missing (unknown = untrusted)
+    const validSigCount = typeof bundle._validSigCount === 'number' ? bundle._validSigCount : -1;
+    if (validSigCount < bundle.threshold) {
       return {
         outcome: 'QUORUM_FAILURE',
         did,
         bundleExpiresAt: bundle.expiresAt,
-        message: `Bundle has insufficient validator signatures (${bundle._validSigCount} of ${bundle.threshold} required).`,
+        message: `Bundle has insufficient validator signatures (${validSigCount < 0 ? 'unknown' : validSigCount} of ${bundle.threshold} required).`,
       };
     }
 

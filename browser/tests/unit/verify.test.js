@@ -75,6 +75,15 @@ describe('DecPKIClient.verify', () => {
     expect(result.bundleExpiresAt).toBe(9999999999);
   });
 
+  it('returns QUORUM_FAILURE when _validSigCount is absent (fail-closed)', async () => {
+    const client = makeClient();
+    const bundleWithoutCount = { ...FIXTURE };
+    delete bundleWithoutCount._validSigCount;
+    client._bundle = bundleWithoutCount;
+    const result = await client.verify('did:local:test-svc');
+    expect(result.outcome).toBe('QUORUM_FAILURE');
+  });
+
   it('returns TAMPERED when the proof sibling is mutated', async () => {
     const client = makeClient();
     // Create a bundle where the snapRoot differs from the leaf hash (proof will fail)

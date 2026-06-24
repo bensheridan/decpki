@@ -22,9 +22,9 @@
     "idb": "^8.0.0"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.9",
+    "@vitest/coverage-v8": "^2.1.9",
     "esbuild": "^0.28.1",
     "happy-dom": "^20.10.6",
-    "vitest": "^4.1.9"
+    "vitest": "^2.1.9"
   }
 }
