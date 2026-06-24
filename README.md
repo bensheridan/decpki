@@ -107,6 +107,27 @@ See [specs/001-bundle-format-validator-quorum/contracts/python-api-contract.md](
 - Merkle proofs use **SHA-256**; verification is pure arithmetic — no external calls
 - Revocation is handled by issuing a new bundle that omits revoked identities (Option B)
 
+## Demo
+
+See the offline guarantee in action with two Docker containers — one that generates a trust bundle, and one that verifies an identity with the network physically cut.
+
+**Prerequisites**: Docker Engine with Compose V2
+
+```bash
+# Standard demo (24-hour bundle) — exits 0
+./demo.sh
+
+# Expiry demo (30-second bundle, shows EXPIRED after grace lapses) — exits 5
+./demo.sh --short-expiry
+
+# Skip image rebuild on subsequent runs
+./demo.sh --no-build
+```
+
+The server container generates a 3-node quorum, registers `did:local:demo-server`, signs a bundle, and exits. The orchestrator cuts the network. The client verifies with zero network calls.
+
+See [specs/002-docker-compose-offline-demo/quickstart.md](specs/002-docker-compose-offline-demo/quickstart.md) for full validation scenarios.
+
 ## Running tests
 
 ```bash

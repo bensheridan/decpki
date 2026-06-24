@@ -1,0 +1,13 @@
+.git/
+specs/
+*.key.json
+*.cbor
+identity_log.json
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+decpki.egg-info/
+.venv/
+venv/
+.DS_Store

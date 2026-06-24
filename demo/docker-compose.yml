@@ -1,0 +1,35 @@
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile
+    entrypoint: ["/bin/bash", "/app/demo/server-entrypoint.sh"]
+    volumes:
+      - demo-shared:/shared
+    environment:
+      - BUNDLE_GRACE=${BUNDLE_GRACE:-24h}
+      - DEMO_DID=${DEMO_DID:-did:local:demo-server}
+    networks:
+      - demo-net
+
+  client:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile
+    entrypoint: ["/bin/bash", "/app/demo/client-entrypoint.sh"]
+    volumes:
+      - demo-shared:/shared
+    environment:
+      - DEMO_DID=${DEMO_DID:-did:local:demo-server}
+      - BUNDLE_PATH=${BUNDLE_PATH:-/shared/bundle.cbor}
+    networks:
+      - demo-net
+    depends_on:
+      server:
+        condition: service_completed_successfully
+
+volumes:
+  demo-shared:
+
+networks:
+  demo-net:
