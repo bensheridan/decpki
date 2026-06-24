@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "decpki"
+version = "0.1.0"
+description = "Decentralized PKI prototype: offline trust bundles with validator quorum"
+requires-python = ">=3.11"
+dependencies = [
+    "cbor2>=5.6",
+    "cryptography>=42.0",
+    "click>=8.1",
+]
+
+[project.scripts]
+decpki = "cli.decpki_cli:cli"
+
+[tool.setuptools]
+packages = ["decpki", "cli"]
+
+[tool.setuptools.package-dir]
+"decpki" = "src/decpki"
+"cli" = "cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
