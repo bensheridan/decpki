@@ -1,0 +1,30 @@
+{
+  "name": "decpki-client",
+  "version": "0.1.0",
+  "description": "Browser offline identity client for the decentralized PKI prototype",
+  "type": "module",
+  "main": "dist/decpki-client.iife.js",
+  "module": "dist/decpki-client.mjs",
+  "types": "src/index.d.ts",
+  "files": [
+    "dist/",
+    "src/index.d.ts"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "node demo/server.mjs"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^2.1.0",
+    "cbor-x": "^1.5.9",
+    "idb": "^8.0.0"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.9",
+    "esbuild": "^0.28.1",
+    "happy-dom": "^20.10.6",
+    "vitest": "^4.1.9"
+  }
+}

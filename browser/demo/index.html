@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DecPKI Offline Identity Client — Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; }
+    label { display: block; margin-top: 1rem; font-weight: bold; }
+    input { width: 100%; padding: .4rem; font-size: 1rem; box-sizing: border-box; }
+    button { margin-top: .8rem; padding: .5rem 1.2rem; font-size: 1rem; cursor: pointer; }
+    #status, #result { margin-top: 1rem; padding: .7rem; border-radius: 4px; font-family: monospace; white-space: pre-wrap; }
+    #status { background: #f0f0f0; }
+    .VALID { background: #d4edda; color: #155724; }
+    .EXPIRED, .NO_BUNDLE { background: #fff3cd; color: #856404; }
+    .TAMPERED, .QUORUM_FAILURE { background: #f8d7da; color: #721c24; }
+    .NOT_FOUND { background: #e2e3e5; color: #383d41; }
+  </style>
+</head>
+<body>
+  <h1>DecPKI — Browser Offline Identity Demo</h1>
+
+  <div id="status">Initialising…</div>
+
+  <label for="did">DID to verify</label>
+  <input type="text" id="did" value="did:local:test-svc" />
+
+  <button id="btn-sync">Sync Bundle</button>
+  <button id="btn-verify">Verify</button>
+
+  <div id="result"></div>
+
+  <script src="/decpki-client.iife.js"></script>
+  <script>
+    const BUNDLE_ENDPOINT = window.location.origin + '/bundle.cbor';
+    const client = new DecPKILib.DecPKIClient({
+      bundleEndpoint: BUNDLE_ENDPOINT,
+      swPath: '/decpki-sw.js',
+    });
+
+    const statusEl = document.getElementById('status');
+    const resultEl = document.getElementById('result');
+    const didInput = document.getElementById('did');
+
+    client.onBundleUpdated = ({ expiresAt }) => {
+      const exp = new Date(expiresAt * 1000).toLocaleString();
+      statusEl.textContent = `Bundle updated — expires ${exp}`;
+    };
+
+    async function init() {
+      try {
+        await client.init();
+        const state = await client.getSyncState();
+        if (state?.lastSync) {
+          const exp = await getBundleExpiry();
+          statusEl.textContent = `Bundle loaded — expires ${exp}`;
+        } else {
+          statusEl.textContent = 'No bundle stored. Click Sync to fetch one.';
+        }
+      } catch (e) {
+        statusEl.textContent = `Init error: ${e.message}`;
+      }
+    }
+
+    async function getBundleExpiry() {
+      const state = await client.getSyncState();
+      return state ? new Date((state.lastBundleExpiresAt || 0) * 1000).toLocaleString() : 'unknown';
+    }
+
+    document.getElementById('btn-sync').addEventListener('click', async () => {
+      statusEl.textContent = 'Syncing…';
+      await client.requestSync();
+      statusEl.textContent = 'Sync request sent to Service Worker.';
+    });
+
+    document.getElementById('btn-verify').addEventListener('click', async () => {
+      const did = didInput.value.trim();
+      if (!did) { resultEl.textContent = 'Enter a DID first.'; return; }
+
+      const t0 = performance.now();
+      const result = await client.verify(did);
+      const ms = (performance.now() - t0).toFixed(1);
+
+      resultEl.className = result.outcome;
+      const exp = result.bundleExpiresAt
+        ? new Date(result.bundleExpiresAt * 1000).toISOString()
+        : 'n/a';
+      resultEl.textContent =
+        `outcome: ${result.outcome}\ndid: ${result.did}\nbundleExpiresAt: ${exp}\nmessage: ${result.message}\ntime: ${ms}ms`;
+    });
+
+    init();
+  </script>
+</body>
+</html>
