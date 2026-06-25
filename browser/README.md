@@ -141,6 +141,54 @@ decpki bundle --validator /tmp/alpha.key.json --validator /tmp/beta.key.json --v
 
 **Registration demo**: open `http://localhost:3000/register.html` while the demo server and BFF are both running.
 
+## Session / Login (FIDO2 Authentication)
+
+The `DecPKISession` class (`src/session.js`) handles WebAuthn login against the BFF, JWT session token storage, silent refresh, and logout.
+
+```js
+import { DecPKISession } from './session.js';
+
+const session = new DecPKISession({
+  bffBaseUrl: 'http://localhost:8000/login',  // HTTPS required (localhost excepted)
+});
+
+// Log in — browser prompts for biometric/PIN, BFF verifies against trust bundle
+const result = await session.login('did:local:<uuid>');
+// result: { did, sessionToken, refreshToken, expiresAt, refreshExpiresAt }
+
+// Retrieve token for use in API calls (silently refreshes if expiry < 120s away)
+const token = await session.getToken();
+// Use as: Authorization: Bearer <token>
+
+// Check login state
+if (session.isLoggedIn()) {
+  const did = session.getDid();
+}
+
+// Explicit logout — invalidates refresh token server-side
+await session.logout();
+```
+
+**Error classes**:
+
+| Class | Thrown when |
+|-------|-------------|
+| `LoginCancelledError` | User dismissed the WebAuthn biometric/PIN prompt |
+| `LoginFailedError` | BFF rejected the assertion (bad signature, expired challenge, revoked DID) |
+| `DIDNotFoundError` | DID not found in promoted enrolments at `/login/start` |
+| `SessionExpiredError` | Refresh token expired — user must call `login()` again |
+
+**BFF requirement**: The BFF (`bff/`) must be running with a `SESSION_SECRET` env var:
+
+```bash
+cd bff
+SESSION_SECRET=your-secret-min-32-chars uvicorn main:app --port 8000
+```
+
+**Login demo**: open `http://localhost:3000/login.html` with the demo server and BFF running. Register first via `/register.html` to get a promoted DID, then log in.
+
+**Full validation scenarios**: see [`../specs/005-bff-session-issuance/quickstart.md`](../specs/005-bff-session-issuance/quickstart.md).
+
 ## Bundle sync
 
 The Service Worker automatically syncs when:

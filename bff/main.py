@@ -10,12 +10,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from jose import JWTError
 from pydantic import BaseModel
 
+from bundle_cache import BundleCache
 from cose import extract_ed25519_pubkey
 from enrolment import DuplicateCredentialError, EnrolmentStore
+from session import SessionStore, verify_assertion
 
 
 _THRESHOLD = int(os.environ.get("THRESHOLD", "2"))
@@ -24,14 +27,19 @@ _RP_NAME = os.environ.get("RP_NAME", "DecPKI Prototype")
 _ORIGIN = os.environ.get("ORIGIN", f"http://{_RP_ID}")
 
 _store: EnrolmentStore | None = None
+_bundle_cache: BundleCache | None = None
+_session_store: SessionStore | None = None
 _challenges: dict[str, dict] = {}
 _nonces: dict[str, dict] = {}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _store
+    global _store, _bundle_cache, _session_store
     _store = EnrolmentStore(threshold=_THRESHOLD)
+    _bundle_cache = BundleCache()
+    _session_store = SessionStore()
+    _bundle_cache.start()
     yield
 
 
@@ -242,3 +250,142 @@ def get_request(request_id: str):
         "threshold": req.threshold,
         "expires_at": req.expires_at,
     }
+
+
+# ── Login endpoints (Feature 005) ─────────────────────────────────────────────
+
+def _find_promoted_enrolment(did: str) -> dict | None:
+    """Scan promoted enrolments directory for a given DID."""
+    promoted_dir = Path(os.environ.get("ENROLMENT_DIR", "/tmp/decpki-enrolments")) / "promoted"
+    if not promoted_dir.exists():
+        return None
+    for p in promoted_dir.glob("*.json"):
+        try:
+            data = json.loads(p.read_text())
+            if data.get("did") == did:
+                return data
+        except Exception:
+            pass
+    return None
+
+
+class LoginStartRequest(BaseModel):
+    did: str
+
+
+class LoginCompleteRequest(BaseModel):
+    did: str
+    assertion: dict[str, Any]
+
+
+class LoginRefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class LoginLogoutRequest(BaseModel):
+    refresh_token: str
+
+
+@app.post("/login/start")
+def login_start(body: LoginStartRequest):
+    """Initiate a WebAuthn authentication ceremony."""
+    enrolment = _find_promoted_enrolment(body.did)
+    if enrolment is None:
+        raise HTTPException(status_code=404, detail=f"DID not found: {body.did}")
+
+    credential_id = enrolment.get("credential_id", "")
+    public_key_hex = enrolment.get("public_key_hex", "")
+
+    challenge_hex = _session_store.create_challenge(body.did, credential_id, public_key_hex)
+    challenge_b64 = _b64url(bytes.fromhex(challenge_hex))
+
+    return {
+        "challenge": challenge_b64,
+        "allow_credentials": [{"type": "public-key", "id": credential_id}],
+        "user_verification": "preferred",
+        "timeout": 60000,
+    }
+
+
+@app.post("/login/complete")
+def login_complete(body: LoginCompleteRequest):
+    """Verify WebAuthn assertion and issue session + refresh tokens."""
+    response = body.assertion.get("response", {})
+    client_data_json_b64 = response.get("clientDataJSON", "")
+
+    try:
+        client_data = json.loads(_b64url_decode(client_data_json_b64))
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid clientDataJSON: {e}")
+
+    recv_challenge_b64 = client_data.get("challenge", "")
+    try:
+        challenge_hex = _b64url_decode(recv_challenge_b64).hex()
+    except Exception:
+        raise HTTPException(status_code=422, detail="Cannot decode challenge from clientDataJSON")
+
+    challenge_entry = _session_store.consume_challenge(challenge_hex)
+    if challenge_entry is None:
+        raise HTTPException(status_code=401, detail="Challenge expired or not found")
+
+    if challenge_entry["did"] != body.did:
+        raise HTTPException(status_code=401, detail="DID mismatch")
+
+    ok = verify_assertion(
+        authenticator_data_b64=response.get("authenticatorData", ""),
+        client_data_json_b64=client_data_json_b64,
+        signature_b64=response.get("signature", ""),
+        public_key_hex=challenge_entry["public_key_hex"],
+        expected_challenge_hex=challenge_hex,
+    )
+    if not ok:
+        raise HTTPException(status_code=401, detail="Assertion signature verification failed")
+
+    if not _bundle_cache.is_did_active(body.did):
+        raise HTTPException(status_code=401, detail="DID not active in trust bundle")
+
+    session_token, exp = _session_store.issue_session_token(body.did)
+    refresh_token, refresh_exp = _session_store.issue_refresh_token(body.did)
+
+    return {
+        "session_token": session_token,
+        "refresh_token": refresh_token,
+        "did": body.did,
+        "expires_at": exp,
+        "refresh_expires_at": refresh_exp,
+    }
+
+
+@app.get("/login/verify")
+def login_verify(authorization: str | None = Header(default=None)):
+    """Verify a session token."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = authorization[len("Bearer "):]
+    try:
+        payload = _session_store.verify_session_token(token)
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    return {"did": payload["sub"], "expires_at": payload["exp"]}
+
+
+@app.post("/login/refresh")
+def login_refresh(body: LoginRefreshRequest):
+    """Exchange refresh token for new session token."""
+    entry = _session_store.consume_refresh_token(body.refresh_token)
+    if entry is None:
+        raise HTTPException(status_code=401, detail="Refresh token not found or expired")
+    if int(time.time()) > entry["expires_at"]:
+        _session_store.revoke_refresh_token(body.refresh_token)
+        raise HTTPException(status_code=401, detail="Refresh token not found or expired")
+    if not _bundle_cache.is_did_active(entry["did"]):
+        raise HTTPException(status_code=401, detail="DID not active in trust bundle")
+    session_token, exp = _session_store.issue_session_token(entry["did"])
+    return {"session_token": session_token, "did": entry["did"], "expires_at": exp}
+
+
+@app.post("/login/logout")
+def login_logout(body: LoginLogoutRequest):
+    """Invalidate refresh token (idempotent)."""
+    _session_store.revoke_refresh_token(body.refresh_token)
+    return {"ok": True}

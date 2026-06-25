@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
-at `specs/004-fido2-registration/plan.md`.
+at `specs/005-bff-session-issuance/plan.md`.
 <!-- SPECKIT END -->

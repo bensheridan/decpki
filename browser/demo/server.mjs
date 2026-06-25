@@ -23,8 +23,8 @@ createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const pathname = url.pathname;
 
-  // Proxy /enrolment/* to the BFF
-  if (pathname.startsWith('/enrolment')) {
+  // Proxy /enrolment/* and /login/* to the BFF
+  if (pathname.startsWith('/enrolment') || pathname.startsWith('/login')) {
     const options = {
       hostname: '127.0.0.1',
       port: BFF_PORT,
@@ -69,6 +69,12 @@ createServer((req, res) => {
     res.end(html);
     return;
   }
+  if (pathname === '/login.html') {
+    const html = readFileSync(join(__dirname, 'login.html'));
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(html);
+    return;
+  }
 
   // Serve src/ files (for ESM demo import of registration.js)
   const srcFile = join(SRC_DIR, pathname.replace(/^\/src\//, ''));
@@ -95,5 +101,6 @@ createServer((req, res) => {
   console.log(`DecPKI demo server at http://localhost:${PORT}`);
   console.log(`Bundle endpoint: /bundle.cbor → ${BUNDLE_PATH}`);
   console.log(`Registration demo: http://localhost:${PORT}/register.html`);
-  console.log(`BFF proxy: /enrolment/* → http://localhost:${BFF_PORT} (set BFF_PORT to override)`);
+  console.log(`Login demo: http://localhost:${PORT}/login.html`);
+  console.log(`BFF proxy: /enrolment/* /login/* → http://localhost:${BFF_PORT} (set BFF_PORT to override)`);
 });

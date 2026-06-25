@@ -104,6 +104,31 @@ decpki bundle --validator /tmp/alpha.key.json --validator /tmp/beta.key.json --v
 
 See [browser/README.md](browser/README.md) for the `DecPKIRegistration` JS API.
 
+## FIDO2 Login (BFF Session Issuance)
+
+After registering a passkey, users can log in via a WebAuthn assertion. The BFF verifies the signature against the enrolled public key, checks the DID is active in the current trust bundle, and issues a short-lived JWT session token plus a longer-lived refresh token.
+
+See [specs/005-bff-session-issuance/quickstart.md](specs/005-bff-session-issuance/quickstart.md) for end-to-end scenarios including silent refresh, revoked DID rejection, and logout.
+
+**Quick version** (requires Feature 004 completed — a promoted DID exists):
+
+```bash
+# 1. Start the BFF with a session secret
+cd bff
+SESSION_SECRET=your-secret-at-least-32-chars uvicorn main:app --port 8000
+
+# 2. Start the browser demo server
+cd browser && BUNDLE_PATH=/tmp/bundle.cbor node demo/server.mjs
+
+# 3. Open http://localhost:3000/login.html
+#    Enter the DID from registration — click Log In — authenticate with biometric/PIN
+#    Click "Call Protected Endpoint" → GET /login/verify → HTTP 200 with DID in response
+
+# 4. Click Log Out — subsequent refresh token use returns 401
+```
+
+See [browser/README.md](browser/README.md) for the `DecPKISession` JS API.
+
 ## CLI reference
 
 | Command | Description |
@@ -182,19 +207,23 @@ pytest
 ```
 src/decpki/       # Library: models, merkle, bundle, quorum, verify
 cli/              # CLI entry point (click) + enrolment commands
-bff/              # FIDO2 enrolment BFF (FastAPI)
+bff/              # FIDO2 BFF (FastAPI) — enrolment + login/session
+  session.py      # JWT issue/verify, refresh tokens, login challenges
+  bundle_cache.py # Background bundle loader + DID lookup
 browser/          # Browser offline client (Service Worker + IndexedDB)
+  src/session.js  # DecPKISession — login, refresh, logout
 tests/            # unit/, integration/, contract/
 specs/            # Design documents, data model, contracts, quickstarts
   001-bundle-format-validator-quorum/
   002-docker-compose-offline-demo/
   003-browser-offline-client/
   004-fido2-registration/
+  005-bff-session-issuance/
 ```
 
 ## Status
 
-Prototype — four features implemented:
+Prototype — five features implemented:
 
 | Feature | Description |
 |---------|-------------|
@@ -202,5 +231,6 @@ Prototype — four features implemented:
 | [002](specs/002-docker-compose-offline-demo/) | Docker Compose offline demo |
 | [003](specs/003-browser-offline-client/) | Browser offline client (Service Worker + IndexedDB) |
 | [004](specs/004-fido2-registration/) | FIDO2 passkey registration + chain enrolment |
+| [005](specs/005-bff-session-issuance/) | FIDO2 login — JWT session tokens, silent refresh, logout |
 
 Open problems (FIPS compliance, production networking, HSM key storage) are documented in [decentralized-pki-design.md](decentralized-pki-design.md).
