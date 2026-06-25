@@ -30,6 +30,8 @@ class SessionStore:
     def __init__(self):
         self._challenges: dict[str, dict] = {}
         self._refresh_tokens: dict[str, dict] = {}
+        self._jti_blocklist: set[str] = set()
+        self._sessions_by_did: dict[str, set[str]] = {}
 
     # --- challenge store ---
 
@@ -56,21 +58,24 @@ class SessionStore:
 
     # --- session tokens ---
 
-    def issue_session_token(self, did: str) -> tuple[str, int]:
+    def issue_session_token(self, did: str, refresh_token_hex: str | None = None) -> tuple[str, int]:
         secret = os.environ.get("SESSION_SECRET", _SESSION_SECRET)
         if not secret:
             raise RuntimeError("SESSION_SECRET env var is required")
         lifetime = int(os.environ.get("SESSION_LIFETIME_SECONDS", str(_SESSION_LIFETIME)))
         now = int(time.time())
         exp = now + lifetime
+        jti = str(uuid.uuid4())
         payload = {
             "sub": did,
-            "jti": str(uuid.uuid4()),
+            "jti": jti,
             "iat": now,
             "exp": exp,
             "type": "session",
         }
         token = jwt.encode(payload, secret, algorithm=_ALGORITHM)
+        if refresh_token_hex and refresh_token_hex in self._refresh_tokens:
+            self._refresh_tokens[refresh_token_hex]["last_jti"] = jti
         return token, exp
 
     def verify_session_token(self, token: str) -> dict:
@@ -89,7 +94,11 @@ class SessionStore:
             "did": did,
             "issued_at": now,
             "expires_at": exp,
+            "last_jti": "",
         }
+        if did not in self._sessions_by_did:
+            self._sessions_by_did[did] = set()
+        self._sessions_by_did[did].add(token)
         return token, exp
 
     def consume_refresh_token(self, token: str) -> dict | None:
@@ -97,7 +106,45 @@ class SessionStore:
         return self._refresh_tokens.get(token)
 
     def revoke_refresh_token(self, token: str):
-        self._refresh_tokens.pop(token, None)
+        entry = self._refresh_tokens.pop(token, None)
+        if entry:
+            did = entry.get("did", "")
+            if did in self._sessions_by_did:
+                self._sessions_by_did[did].discard(token)
+
+    # --- jti blocklist ---
+
+    def is_jti_revoked(self, jti: str) -> bool:
+        return jti in self._jti_blocklist
+
+    # --- session listing and revocation ---
+
+    def list_sessions(self, did: str) -> list[dict]:
+        now = int(time.time())
+        result = []
+        for token_hex in list(self._sessions_by_did.get(did, set())):
+            entry = self._refresh_tokens.get(token_hex)
+            if entry is None or now > entry["expires_at"]:
+                self._sessions_by_did.get(did, set()).discard(token_hex)
+                continue
+            result.append({
+                "session_id": token_hex[:16],
+                "did": did,
+                "issued_at": entry["issued_at"],
+                "expires_at": entry["expires_at"],
+                "last_jti": entry.get("last_jti", ""),
+            })
+        return result
+
+    def revoke_session(self, session_id: str) -> tuple[bool, str | None]:
+        for token_hex, entry in list(self._refresh_tokens.items()):
+            if token_hex[:16] == session_id:
+                last_jti = entry.get("last_jti", "")
+                if last_jti:
+                    self._jti_blocklist.add(last_jti)
+                self.revoke_refresh_token(token_hex)
+                return True, token_hex
+        return False, None
 
 
 def verify_assertion(

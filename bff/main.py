@@ -344,8 +344,8 @@ def login_complete(body: LoginCompleteRequest):
     if not _bundle_cache.is_did_active(body.did):
         raise HTTPException(status_code=401, detail="DID not active in trust bundle")
 
-    session_token, exp = _session_store.issue_session_token(body.did)
     refresh_token, refresh_exp = _session_store.issue_refresh_token(body.did)
+    session_token, exp = _session_store.issue_session_token(body.did, refresh_token_hex=refresh_token)
 
     return {
         "session_token": session_token,
@@ -366,6 +366,8 @@ def login_verify(authorization: str | None = Header(default=None)):
         payload = _session_store.verify_session_token(token)
     except JWTError as e:
         raise HTTPException(status_code=401, detail=str(e))
+    if _session_store.is_jti_revoked(payload["jti"]):
+        raise HTTPException(status_code=401, detail="Session has been revoked")
     return {"did": payload["sub"], "expires_at": payload["exp"]}
 
 
@@ -380,7 +382,7 @@ def login_refresh(body: LoginRefreshRequest):
         raise HTTPException(status_code=401, detail="Refresh token not found or expired")
     if not _bundle_cache.is_did_active(entry["did"]):
         raise HTTPException(status_code=401, detail="DID not active in trust bundle")
-    session_token, exp = _session_store.issue_session_token(entry["did"])
+    session_token, exp = _session_store.issue_session_token(entry["did"], refresh_token_hex=body.refresh_token)
     return {"session_token": session_token, "did": entry["did"], "expires_at": exp}
 
 
@@ -403,6 +405,8 @@ def api_me(authorization: str | None = Header(default=None)):
         payload = _session_store.verify_session_token(token)
     except JWTError as e:
         raise HTTPException(status_code=401, detail=str(e))
+    if _session_store.is_jti_revoked(payload["jti"]):
+        raise HTTPException(status_code=401, detail="Session has been revoked")
     did = payload["sub"]
     return {
         "did": did,
@@ -410,3 +414,49 @@ def api_me(authorization: str | None = Header(default=None)):
         "expires_at": payload["exp"],
         "message": f"Hello, {did}",
     }
+
+
+# ── Session management endpoints (Feature 007) ────────────────────────────────
+
+class SessionListRequest(BaseModel):
+    refresh_token: str
+
+
+@app.get("/api/sessions")
+def api_sessions(body: SessionListRequest, authorization: str | None = Header(default=None)):
+    """List all active sessions for the authenticated DID."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = authorization[len("Bearer "):]
+    try:
+        payload = _session_store.verify_session_token(token)
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    if _session_store.is_jti_revoked(payload["jti"]):
+        raise HTTPException(status_code=401, detail="Session has been revoked")
+    did = payload["sub"]
+    sessions = _session_store.list_sessions(did)
+    current_prefix = body.refresh_token[:16] if body.refresh_token else ""
+    for s in sessions:
+        s["is_current"] = s["session_id"] == current_prefix
+    return {"sessions": sessions}
+
+
+@app.delete("/api/sessions/{session_id}")
+def api_revoke_session(session_id: str, authorization: str | None = Header(default=None)):
+    """Revoke a specific session by ID."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = authorization[len("Bearer "):]
+    try:
+        payload = _session_store.verify_session_token(token)
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    if _session_store.is_jti_revoked(payload["jti"]):
+        raise HTTPException(status_code=401, detail="Session has been revoked")
+    found, _ = _session_store.revoke_session(session_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Session not found")
+    # self_revoked: the jti of the caller's session was just blocklisted
+    self_revoked = _session_store.is_jti_revoked(payload["jti"])
+    return {"ok": True, "self_revoked": self_revoked}

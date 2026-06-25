@@ -202,6 +202,53 @@ const me = await r.json();
 
 The login demo at `/login.html` does exactly this when you click **Call Protected Endpoint**.
 
+## Session Management
+
+The `DecPKISessions` class (`src/sessions.js`) lists all active sessions for the logged-in DID, revokes individual sessions, and initiates a second passkey enrolment (Add New Device).
+
+```js
+import { DecPKISession } from './session.js';
+import { DecPKISessions } from './sessions.js';
+
+const session = new DecPKISession({ bffBaseUrl: 'http://localhost:8000/login' });
+const sessions = new DecPKISessions({
+  bffBaseUrl: 'http://localhost:8000',  // HTTPS required (localhost excepted)
+  session,                              // DecPKISession instance
+});
+
+// List all active sessions for the logged-in DID
+const { sessions: list } = await sessions.list();
+// list: SessionEntry[]
+// Each entry: { sessionId, did, issuedAt, expiresAt, isCurrent }
+
+// Revoke a session by ID (isCurrent === true means self-revocation → logout)
+const result = await sessions.revoke(list[0].sessionId);
+// result: { ok: true, selfRevoked: boolean }
+
+// Initiate enrolment of a new passkey for the current DID
+const enrolment = await sessions.addDevice();
+// enrolment: { requestId, did, status: 'pending', threshold, signaturesCollected }
+```
+
+**Session identity**: `sessionId` is the first 16 hex chars of the refresh token. It uniquely identifies a session for display and revocation — it is not the full token.
+
+**Immediate revocation**: when a session is revoked, its JWT `jti` is added to a server-side blocklist. All subsequent requests using that token receive HTTP 401, even before the token expires.
+
+**Self-revocation**: if `selfRevoked` is `true`, the caller's own session was invalidated. The UI should call `session.logout()` and redirect to the login page.
+
+**Error classes**:
+
+| Class | Thrown when |
+|-------|-------------|
+| `SessionsAuthError` | Caller's session token is invalid, expired, or revoked |
+| `SessionNotFoundError` | Target session not found (already revoked or expired) |
+| `AddDeviceCancelledError` | User dismissed the WebAuthn prompt during Add New Device |
+| `AddDeviceError` | Add New Device failed (device unsupported, duplicate credential, etc.) |
+
+**Session management demo**: open `http://localhost:3000/sessions.html` while logged in. The page lists all active sessions, marks the current one as **This device**, and provides per-session **Revoke** and **Add New Device** buttons.
+
+**Full validation scenarios**: see [`../specs/007-session-management/quickstart.md`](../specs/007-session-management/quickstart.md).
+
 ## Bundle sync
 
 The Service Worker automatically syncs when:

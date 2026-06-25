@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DecPKI — Session Management</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 1.4rem; }
+    nav { margin-bottom: 24px; font-size: 0.85rem; }
+    nav a { margin-right: 12px; }
+    #status { margin-top: 20px; padding: 12px; background: #f5f5f5; border-radius: 4px; font-size: 0.9rem; white-space: pre-wrap; word-break: break-all; min-height: 40px; }
+    #status.error { background: #fff0f0; color: #c00; }
+    #status.ok { background: #f0fff0; }
+    #sessionList { list-style: none; padding: 0; margin-top: 16px; }
+    #sessionList li {
+      border: 1px solid #ddd; border-radius: 6px; padding: 12px 16px; margin-bottom: 10px;
+      display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    }
+    #sessionList li.current { border-color: #4c9; background: #f0fff0; }
+    .session-info { flex: 1; font-size: 0.9rem; }
+    .session-info .badge {
+      display: inline-block; background: #4c9; color: #fff;
+      border-radius: 3px; padding: 1px 6px; font-size: 0.75rem; margin-left: 6px;
+    }
+    .session-info .meta { color: #777; font-size: 0.8rem; margin-top: 4px; }
+    .session-actions { display: flex; gap: 8px; }
+    button { padding: 7px 14px; font-size: 0.85rem; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    #btnAddDevice { margin-top: 16px; }
+    #notLoggedIn { margin-top: 24px; color: #c00; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/index.html">Home</a>
+    <a href="/register.html">Register</a>
+    <a href="/login.html">Login</a>
+    <a href="/sessions.html">Sessions</a>
+  </nav>
+  <h1>Session Management</h1>
+
+  <div id="notLoggedIn" hidden>
+    Not logged in. <a href="/login.html">Log in first</a>.
+  </div>
+
+  <div id="main" hidden>
+    <ul id="sessionList"></ul>
+    <button id="btnAddDevice">Add New Device</button>
+  </div>
+
+  <div id="status"></div>
+
+  <script type="module">
+    import { DecPKISession, SessionExpiredError } from '/src/session.js';
+    import { DecPKISessions, SessionsAuthError, SessionNotFoundError, AddDeviceCancelledError, AddDeviceError }
+      from '/src/sessions.js';
+
+    const BFF_BASE = 'http://localhost:8000';
+    const session = new DecPKISession({ bffBaseUrl: `${BFF_BASE}/login` });
+    const sessions = new DecPKISessions({ bffBaseUrl: BFF_BASE, session });
+
+    const statusEl = document.getElementById('status');
+    const listEl = document.getElementById('sessionList');
+    const notLoggedInEl = document.getElementById('notLoggedIn');
+    const mainEl = document.getElementById('main');
+    const btnAddDevice = document.getElementById('btnAddDevice');
+
+    function setStatus(msg, cls = '') {
+      statusEl.className = cls;
+      statusEl.textContent = msg;
+    }
+
+    function formatDate(unixSecs) {
+      return new Date(unixSecs * 1000).toLocaleString();
+    }
+
+    async function loadSessions() {
+      setStatus('Loading sessions…');
+      try {
+        const result = await sessions.list();
+        listEl.textContent = '';
+        if (result.sessions.length === 0) {
+          setStatus('No active sessions found.');
+          return;
+        }
+        result.sessions.forEach(s => {
+          const li = document.createElement('li');
+          if (s.isCurrent) li.className = 'current';
+
+          const info = document.createElement('div');
+          info.className = 'session-info';
+
+          const idSpan = document.createElement('span');
+          idSpan.textContent = `Session ${s.sessionId}`;
+          info.appendChild(idSpan);
+
+          if (s.isCurrent) {
+            const badge = document.createElement('span');
+            badge.className = 'badge';
+            badge.textContent = 'This device';
+            info.appendChild(badge);
+          }
+
+          const meta = document.createElement('div');
+          meta.className = 'meta';
+          meta.textContent = `Issued: ${formatDate(s.issuedAt)} · Expires: ${formatDate(s.expiresAt)}`;
+          info.appendChild(meta);
+
+          const actions = document.createElement('div');
+          actions.className = 'session-actions';
+
+          const btnRevoke = document.createElement('button');
+          btnRevoke.textContent = s.isCurrent ? 'Sign out this device' : 'Revoke';
+          btnRevoke.addEventListener('click', async () => {
+            btnRevoke.disabled = true;
+            setStatus(`Revoking session ${s.sessionId}…`);
+            try {
+              const result = await sessions.revoke(s.sessionId);
+              if (result.selfRevoked) {
+                await session.logout();
+                setStatus('You have been logged out. Redirecting…', 'ok');
+                setTimeout(() => { window.location.href = '/login.html'; }, 2000);
+              } else {
+                setStatus(`Session ${s.sessionId} revoked.`, 'ok');
+                await loadSessions();
+              }
+            } catch (e) {
+              if (e instanceof SessionNotFoundError) {
+                setStatus(`Session already revoked.`, 'error');
+                await loadSessions();
+              } else if (e instanceof SessionsAuthError) {
+                setStatus('Your session has expired. Please log in again.', 'error');
+              } else {
+                setStatus(`Error: ${e.message}`, 'error');
+              }
+              btnRevoke.disabled = false;
+            }
+          });
+          actions.appendChild(btnRevoke);
+
+          li.appendChild(info);
+          li.appendChild(actions);
+          listEl.appendChild(li);
+        });
+        setStatus('');
+      } catch (e) {
+        if (e instanceof SessionsAuthError) {
+          setStatus('Your session has expired. Please log in again.', 'error');
+        } else {
+          setStatus(`Error loading sessions: ${e.message}`, 'error');
+        }
+      }
+    }
+
+    btnAddDevice.addEventListener('click', async () => {
+      btnAddDevice.disabled = true;
+      setStatus('Starting new device enrolment…');
+      try {
+        const result = await sessions.addDevice();
+        setStatus(`Enrolment request created: ${result.requestId}\nDID: ${result.did}\nStatus: ${result.status}`, 'ok');
+      } catch (e) {
+        if (e instanceof AddDeviceCancelledError) {
+          setStatus('Registration cancelled.', 'error');
+        } else {
+          setStatus(`Add device failed: ${e.message}`, 'error');
+        }
+      } finally {
+        btnAddDevice.disabled = false;
+      }
+    });
+
+    // Boot
+    if (!session.isLoggedIn()) {
+      notLoggedInEl.hidden = false;
+    } else {
+      mainEl.hidden = false;
+      loadSessions();
+    }
+  </script>
+</body>
+</html>

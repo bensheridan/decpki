@@ -75,6 +75,12 @@ createServer((req, res) => {
     res.end(html);
     return;
   }
+  if (pathname === '/sessions.html') {
+    const html = readFileSync(join(__dirname, 'sessions.html'));
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(html);
+    return;
+  }
 
   // Serve src/ files (for ESM demo import of registration.js)
   const srcFile = join(SRC_DIR, pathname.replace(/^\/src\//, ''));

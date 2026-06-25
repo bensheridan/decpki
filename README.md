@@ -15,6 +15,7 @@ Clients verify service identities with **zero network calls** — a signed CBOR 
 5. Users register a FIDO2 passkey → validators co-sign the enrolment → the identity enters the bundle
 6. Users log in via WebAuthn assertion → BFF verifies against bundle → issues a JWT session token
 7. Session token is used to access protected resources (e.g. `GET /api/me`)
+8. Users can view and revoke active sessions per device — revocation is immediate (jti blocklist checked on every request)
 
 See [decentralized-pki-design.md](decentralized-pki-design.md) for the full design rationale.
 
@@ -132,6 +133,30 @@ cd browser && BUNDLE_PATH=/tmp/bundle.cbor node demo/server.mjs
 
 See [browser/README.md](browser/README.md) for the `DecPKISession` JS API.
 
+## Session Management
+
+After logging in, users can view and revoke active sessions from `sessions.html`. Each session corresponds to a login on a specific device. Revoking a session invalidates its JWT immediately (server-side jti blocklist) — no wait for token expiry.
+
+Users can also initiate a second passkey enrolment for their existing DID from the session management page (equivalent to the Feature 004 **Add Credential** flow).
+
+See [specs/007-session-management/quickstart.md](specs/007-session-management/quickstart.md) for end-to-end validation scenarios.
+
+**Quick version** (requires Feature 005 completed — a logged-in session):
+
+```bash
+# 1. Start the BFF
+SESSION_SECRET=your-secret-at-least-32-chars uvicorn main:app --port 8000
+
+# 2. Start the browser demo server
+cd browser && BUNDLE_PATH=/tmp/bundle.cbor node demo/server.mjs
+
+# 3. Log in at http://localhost:3000/login.html
+# 4. Open http://localhost:3000/sessions.html
+#    — See active sessions; current session is marked "This device"
+#    — Click Revoke on another session to invalidate it immediately
+#    — Click Add New Device to enrol a second passkey for the same DID
+```
+
 ## CLI reference
 
 | Command | Description |
@@ -226,7 +251,7 @@ specs/            # Design documents, data model, contracts, quickstarts
 
 ## Status
 
-Prototype — five features implemented:
+Prototype — seven features implemented:
 
 | Feature | Description |
 |---------|-------------|
@@ -236,5 +261,6 @@ Prototype — five features implemented:
 | [004](specs/004-fido2-registration/) | FIDO2 passkey registration + chain enrolment |
 | [005](specs/005-bff-session-issuance/) | FIDO2 login — JWT session tokens, silent refresh, logout |
 | [006](specs/006-protected-resource-demo/) | Protected resource demo — `GET /api/me` closes the register → login → access loop |
+| [007](specs/007-session-management/) | Session management — list active sessions, per-device revocation, add new passkey |
 
 Open problems (FIPS compliance, production networking, HSM key storage) are documented in [decentralized-pki-design.md](decentralized-pki-design.md).
