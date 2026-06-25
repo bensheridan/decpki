@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DecPKI — FIDO2 Registration Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; }
+    button { padding: 0.5rem 1.2rem; font-size: 1rem; cursor: pointer; margin-right: 0.5rem; margin-top: 0.5rem; }
+    input { padding: 0.4rem; font-size: 1rem; width: 100%; box-sizing: border-box; margin-top: 0.25rem; }
+    label { font-weight: 600; display: block; margin-top: 1rem; }
+    #result { margin-top: 1.5rem; background: #f4f4f4; padding: 1rem; border-radius: 6px; white-space: pre-wrap; word-break: break-all; min-height: 3rem; font-family: monospace; font-size: 0.9rem; }
+    .error { color: #c00; }
+    .success { color: #060; }
+    hr { margin: 1.5rem 0; }
+  </style>
+</head>
+<body>
+  <h1>DecPKI — FIDO2 Registration</h1>
+  <p>Creates a passkey credential and submits it for validator enrolment. After <strong>two validators sign</strong> via CLI, regenerate the bundle and verify in the <a href="/">verify demo</a>.</p>
+
+  <button id="btn-register">Register New Identity</button>
+
+  <hr>
+
+  <label for="existing-did">Add credential to existing DID:</label>
+  <input id="existing-did" type="text" placeholder="did:local:...">
+  <button id="btn-add-credential">Add Credential</button>
+
+  <hr>
+
+  <label for="check-id">Check request status:</label>
+  <input id="check-id" type="text" placeholder="request UUID">
+  <button id="btn-check">Check Status</button>
+
+  <div id="result">Ready.</div>
+
+  <script type="module">
+    import { DecPKIRegistration, RegistrationCancelledError, AlgorithmNotSupportedError, OwnershipProofFailedError, RegistrationError } from '/src/registration.js';
+
+    const reg = new DecPKIRegistration({ bffBaseUrl: 'http://localhost:8000/enrolment' });
+    const resultEl = document.getElementById('result');
+
+    function show(text, isError) {
+      resultEl.className = isError ? 'error' : 'success';
+      resultEl.textContent = text;
+    }
+
+    document.getElementById('btn-register').addEventListener('click', async () => {
+      resultEl.className = '';
+      resultEl.textContent = 'Waiting for authenticator…';
+      try {
+        const r = await reg.register();
+        show(
+          `Registered!\n\nDID:        ${r.did}\nRequest ID: ${r.requestId}\nStatus:     ${r.status}\nSignatures: ${r.signaturesCollected}/${r.threshold}\n\nNext steps:\n  decpki enrol-sign --request /tmp/decpki-enrolments/${r.requestId}.json --validator /tmp/alpha.key.json\n  decpki enrol-sign --request /tmp/decpki-enrolments/${r.requestId}.json --validator /tmp/beta.key.json\n  decpki enrol-promote --request /tmp/decpki-enrolments/${r.requestId}.json --threshold 2`,
+          false,
+        );
+      } catch (e) {
+        if (e instanceof RegistrationCancelledError) show('Registration cancelled.', true);
+        else if (e instanceof AlgorithmNotSupportedError) show('Device does not support ed25519 passkeys.', true);
+        else show(`Error: ${e.message}`, true);
+      }
+    });
+
+    document.getElementById('btn-add-credential').addEventListener('click', async () => {
+      const did = document.getElementById('existing-did').value.trim();
+      if (!did) { show('Enter an existing DID first.', true); return; }
+      resultEl.className = '';
+      resultEl.textContent = 'Waiting for authenticator…';
+      try {
+        const r = await reg.addCredential(did);
+        show(`Credential added!\n\nDID: ${r.did}\nRequest ID: ${r.requestId}\nStatus: ${r.status}\nSignatures: ${r.signaturesCollected}/${r.threshold}`, false);
+      } catch (e) {
+        if (e instanceof RegistrationCancelledError) show('Cancelled.', true);
+        else if (e instanceof OwnershipProofFailedError) show('Ownership proof failed — authenticate with an existing credential first.', true);
+        else show(`Error: ${e.message}`, true);
+      }
+    });
+
+    document.getElementById('btn-check').addEventListener('click', async () => {
+      const id = document.getElementById('check-id').value.trim();
+      if (!id) { show('Enter a request ID.', true); return; }
+      try {
+        const s = await reg.getStatus(id);
+        show(`Status: ${s.status}\nDID: ${s.did}\nSignatures: ${s.signaturesCollected}/${s.threshold}\nExpires: ${new Date(s.expiresAt * 1000).toISOString()}`, false);
+      } catch (e) {
+        show(`Error: ${e.message}`, true);
+      }
+    });
+  </script>
+</body>
+</html>

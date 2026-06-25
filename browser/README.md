@@ -97,6 +97,50 @@ BFF     ←──────────────→ PKI server      (server
 
 The revocation lag (max = bundle validity period) only applies in the genuine offline case — when the BFF itself is unreachable. For most applications this is an acceptable edge case; the BFF remains the authoritative enforcement point.
 
+## Registration (FIDO2 / Passkeys)
+
+The `DecPKIRegistration` class (`src/registration.js`) lets users create a FIDO2 passkey and submit it for chain enrolment via a BFF.
+
+```js
+import { DecPKIRegistration } from './registration.js';
+
+const reg = new DecPKIRegistration({
+  bffBaseUrl: 'https://your-bff.example/enrolment',  // HTTPS required (localhost excepted)
+});
+
+// Register a new identity (browser prompts for biometric/PIN)
+const result = await reg.register();
+// result: { requestId, did, status: 'pending', threshold, signaturesCollected, expiresAt }
+
+// After validators co-sign via CLI, the identity enters the next bundle
+// and DecPKIClient.verify(result.did) returns 'VALID'
+
+// Add a second credential to an existing DID (proves ownership of existing credential first)
+const result2 = await reg.addCredential('did:local:<uuid>');
+
+// Poll enrolment request status
+const status = await reg.getStatus(result.requestId);
+```
+
+**BFF requirement**: Registration requires a running BFF (see `bff/` directory in the repo root). The BFF handles challenge issuance, COSE key extraction, and enrolment request creation. Start it with:
+
+```bash
+cd bff
+pip install -r requirements.txt
+uvicorn main:app --port 8000
+```
+
+**Validator co-signing** (after user registers):
+
+```bash
+decpki enrol-sign --request /tmp/decpki-enrolments/<request-id>.json --validator /tmp/alpha.key.json
+decpki enrol-sign --request /tmp/decpki-enrolments/<request-id>.json --validator /tmp/beta.key.json
+decpki enrol-promote --request /tmp/decpki-enrolments/<request-id>.json --threshold 2
+decpki bundle --validator /tmp/alpha.key.json --validator /tmp/beta.key.json --validator /tmp/gamma.key.json --threshold 2 --grace 24h --out /tmp/bundle.cbor
+```
+
+**Registration demo**: open `http://localhost:3000/register.html` while the demo server and BFF are both running.
+
 ## Bundle sync
 
 The Service Worker automatically syncs when:

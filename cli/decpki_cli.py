@@ -6,6 +6,9 @@ from pathlib import Path
 import click
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent))
+
+from enrol_sign import enrol_sign, enrol_promote, enrol_revoke
 
 from decpki import (
     generate_bundle,
@@ -220,6 +223,11 @@ def inspect(bundle_path):
         if r.metadata:
             meta_str = ", ".join(f"{k}={v}" for k, v in r.metadata.items())
             click.echo(f"    Metadata:     {meta_str}")
+
+
+cli.add_command(enrol_sign)
+cli.add_command(enrol_promote)
+cli.add_command(enrol_revoke)
 
 
 if __name__ == "__main__":
