@@ -34,6 +34,7 @@ class EnrolmentRequest:
     signatures: list[ValidatorSig]
     threshold: int
     metadata: dict
+    algorithm: str = "ed25519"  # "ed25519" or "es256"
 
     @property
     def is_expired(self) -> bool:
@@ -60,6 +61,7 @@ class EnrolmentRequest:
             signatures=sigs,
             threshold=d.get("threshold", 2),
             metadata=d.get("metadata", {}),
+            algorithm=d.get("algorithm", "ed25519"),
         )
 
 
@@ -102,6 +104,7 @@ class EnrolmentStore:
         request_type: str = "new",
         existing_did: str | None = None,
         metadata: dict | None = None,
+        algorithm: str = "ed25519",
     ) -> EnrolmentRequest:
         if credential_id in self._all_credential_ids():
             raise DuplicateCredentialError(f"Credential ID already registered: {credential_id}")
@@ -121,6 +124,7 @@ class EnrolmentStore:
             signatures=[],
             threshold=self._threshold,
             metadata=metadata or {},
+            algorithm=algorithm,
         )
         self._path(req.id).write_text(json.dumps(req.to_dict(), indent=2))
         return req

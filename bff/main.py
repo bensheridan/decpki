@@ -16,7 +16,7 @@ from jose import JWTError
 from pydantic import BaseModel
 
 from bundle_cache import BundleCache
-from cose import extract_ed25519_pubkey
+from cose import extract_pubkey
 from enrolment import DuplicateCredentialError, EnrolmentStore
 from session import SessionStore, verify_assertion
 
@@ -113,7 +113,7 @@ def start_registration(did: str | None = Query(default=None)):
                 "name": "user",
                 "displayName": "User",
             },
-            "pubKeyCredParams": [{"type": "public-key", "alg": -8}],
+            "pubKeyCredParams": [{"type": "public-key", "alg": -8}, {"type": "public-key", "alg": -7}],
             "timeout": 60000,
             "attestation": "none",
             "request_type": "add_credential",
@@ -137,7 +137,7 @@ def start_registration(did: str | None = Query(default=None)):
             "name": "user",
             "displayName": "User",
         },
-        "pubKeyCredParams": [{"type": "public-key", "alg": -8}],
+        "pubKeyCredParams": [{"type": "public-key", "alg": -8}, {"type": "public-key", "alg": -7}],
         "timeout": 60000,
         "attestation": "none",
         "request_type": "new",
@@ -177,11 +177,9 @@ def submit_registration(body: SubmitRequest):
     attestation_object_b64 = body.credential.get("response", {}).get("attestationObject", "")
     try:
         att_bytes = _b64url_decode(attestation_object_b64)
-        pubkey_bytes = extract_ed25519_pubkey(att_bytes)
+        public_key_hex, algorithm = extract_pubkey(att_bytes)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-
-    public_key_hex = pubkey_bytes.hex()
 
     credential_id = body.credential.get("id", "")
     if not credential_id:
@@ -204,6 +202,7 @@ def submit_registration(body: SubmitRequest):
             request_type=stored["request_type"],
             existing_did=pending_did if stored["request_type"] == "add_credential" else None,
             metadata={"user_agent": ""},
+            algorithm=algorithm,
         )
     except DuplicateCredentialError as e:
         raise HTTPException(status_code=409, detail="Credential ID already registered.")
@@ -295,8 +294,9 @@ def login_start(body: LoginStartRequest):
 
     credential_id = enrolment.get("credential_id", "")
     public_key_hex = enrolment.get("public_key_hex", "")
+    algorithm = enrolment.get("algorithm", "ed25519")
 
-    challenge_hex = _session_store.create_challenge(body.did, credential_id, public_key_hex)
+    challenge_hex = _session_store.create_challenge(body.did, credential_id, public_key_hex, algorithm=algorithm)
     challenge_b64 = _b64url(bytes.fromhex(challenge_hex))
 
     return {
@@ -337,6 +337,7 @@ def login_complete(body: LoginCompleteRequest):
         signature_b64=response.get("signature", ""),
         public_key_hex=challenge_entry["public_key_hex"],
         expected_challenge_hex=challenge_hex,
+        algorithm=challenge_entry.get("algorithm", "ed25519"),
     )
     if not ok:
         raise HTTPException(status_code=401, detail="Assertion signature verification failed")
@@ -422,7 +423,7 @@ class SessionListRequest(BaseModel):
     refresh_token: str
 
 
-@app.get("/api/sessions")
+@app.post("/api/sessions")
 def api_sessions(body: SessionListRequest, authorization: str | None = Header(default=None)):
     """List all active sessions for the authenticated DID."""
     if not authorization or not authorization.startswith("Bearer "):

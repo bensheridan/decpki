@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DecPKI — FIDO2 Registration Demo</title>
+  <script type="importmap">
+    { "imports": { "@simplewebauthn/browser": "/npm/@simplewebauthn/browser/dist/bundle/index.js" } }
+  </script>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
     h1 { font-size: 1.4rem; }
@@ -52,6 +55,7 @@
       resultEl.textContent = 'Waiting for authenticator…';
       try {
         const r = await reg.register();
+        document.getElementById('check-id').value = r.requestId;
         show(
           `Registered!\n\nDID:        ${r.did}\nRequest ID: ${r.requestId}\nStatus:     ${r.status}\nSignatures: ${r.signaturesCollected}/${r.threshold}\n\nNext steps:\n  decpki enrol-sign --request /tmp/decpki-enrolments/${r.requestId}.json --validator /tmp/alpha.key.json\n  decpki enrol-sign --request /tmp/decpki-enrolments/${r.requestId}.json --validator /tmp/beta.key.json\n  decpki enrol-promote --request /tmp/decpki-enrolments/${r.requestId}.json --threshold 2`,
           false,

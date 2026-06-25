@@ -38,7 +38,7 @@ export class DecPKISessions {
     if (!token) throw new SessionsAuthError();
     const refreshToken = localStorage.getItem('decpki_refresh') || '';
     const r = await fetch(`${this._base}/api/sessions`, {
-      method: 'GET',
+      method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`,

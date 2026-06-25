@@ -3,7 +3,7 @@ export class RegistrationCancelledError extends Error {
 }
 
 export class AlgorithmNotSupportedError extends Error {
-  constructor() { super('Device does not support ed25519 (COSE alg -8) credentials'); this.name = 'AlgorithmNotSupportedError'; }
+  constructor() { super('Device does not support ed25519 or ES256 credentials'); this.name = 'AlgorithmNotSupportedError'; }
 }
 
 export class OwnershipProofFailedError extends Error {
@@ -41,7 +41,7 @@ export class DecPKIRegistration {
       ? `${this._bffBaseUrl}/start?did=${encodeURIComponent(existingDid)}`
       : `${this._bffBaseUrl}/start`;
 
-    const startResp = await fetch(startUrl);
+    const startResp = await fetch(startUrl, { method: 'POST' });
     if (!startResp.ok) {
       const body = await startResp.json().catch(() => ({}));
       throw new RegistrationError(body.detail || `Start failed: ${startResp.status}`);
@@ -91,7 +91,7 @@ export class DecPKIRegistration {
       const body = await submitResp.json().catch(() => ({}));
       if (submitResp.status === 422) {
         const detail = body.detail || '';
-        if (detail.includes('ed25519') || detail.includes('alg -8')) {
+        if (detail.includes('Unsupported COSE algorithm')) {
           throw new AlgorithmNotSupportedError();
         }
         if (detail.includes('Ownership proof')) {

@@ -47,9 +47,9 @@ class BundleCache:
         with self._lock:
             if self._bundle is None:
                 return None
-            for record in self._bundle.identities:
-                if record.did == did and record.revoked_at is None:
-                    return record
+            for entry in self._bundle.identities:
+                if entry.record.did == did and entry.record.revoked_at is None:
+                    return entry.record
         return None
 
     def is_did_active(self, did: str) -> bool:

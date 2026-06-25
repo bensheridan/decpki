@@ -53,23 +53,21 @@ export class DecPKISession {
       startResp = await r.json();
     } catch (e) {
       if (e instanceof DIDNotFoundError || e instanceof LoginFailedError) throw e;
-      throw new LoginFailedError(e.message);
+      throw new LoginFailedError(`/login/start network error: ${e.message}`);
     }
 
     // 2. WebAuthn assertion
     let assertion;
     try {
       assertion = await startAuthentication({
-        optionsJSON: {
-          challenge: startResp.challenge,
-          allowCredentials: startResp.allow_credentials,
-          userVerification: startResp.user_verification,
-          timeout: startResp.timeout,
-        },
+        challenge: startResp.challenge,
+        allowCredentials: startResp.allow_credentials,
+        userVerification: startResp.user_verification,
+        timeout: startResp.timeout,
       });
     } catch (e) {
       if (e.name === 'NotAllowedError') throw new LoginCancelledError();
-      throw new LoginFailedError(e.message);
+      throw new LoginFailedError(`WebAuthn assertion failed: ${e.name}: ${e.message}`);
     }
 
     // 3. Submit assertion to BFF
@@ -83,12 +81,12 @@ export class DecPKISession {
       if (r.status === 404) throw new DIDNotFoundError();
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
-        throw new LoginFailedError(body.detail || `Login rejected: ${r.status}`);
+        throw new LoginFailedError(body.detail || `/login/complete rejected: ${r.status}`);
       }
       completeResp = await r.json();
     } catch (e) {
       if (e instanceof DIDNotFoundError || e instanceof LoginFailedError) throw e;
-      throw new LoginFailedError(e.message);
+      throw new LoginFailedError(`/login/complete network error: ${e.message}`);
     }
 
     this._storeTokens(completeResp);

@@ -66,7 +66,8 @@ def enrol_sign(request_path, validator_path):
 @click.option("--request", "request_path", required=True, help="Path to enrolment request JSON")
 @click.option("--threshold", default=2, type=int, help="Minimum signatures required")
 @click.option("--log", "log_path", default="identity_log.json", help="Identity log path")
-def enrol_promote(request_path, threshold, log_path):
+@click.option("--validator", "validator_paths", multiple=True, help="Validator key file (repeat to provide multiple; overrides automatic lookup)")
+def enrol_promote(request_path, threshold, log_path, validator_paths):
     """Promote a fully co-signed enrolment request to the identity ledger."""
     path = Path(request_path)
     if not path.exists():
@@ -83,20 +84,36 @@ def enrol_promote(request_path, threshold, log_path):
         click.echo(f"Error: Request {req['id']} has expired.", err=True)
         raise SystemExit(1)
 
+    # Build explicit key map if --validator flags provided; otherwise fall back to auto-lookup
+    explicit_keys: dict[str, Path] = {}
+    for vp in validator_paths:
+        vp = Path(vp)
+        if not vp.exists():
+            click.echo(f"Error: validator key not found: {vp}", err=True)
+            raise SystemExit(1)
+        node = ValidatorNode.from_key_file(vp)
+        explicit_keys[node.did] = vp
+
     valid_sigs = []
     payload = _signing_payload(req["id"], req["did"], req["public_key_hex"])
     for sig_entry in req["signatures"]:
         try:
-            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-            pubkey_path = Path(f"{sig_entry['validator_name'].split('validator-')[-1]}.key.json")
-            if not pubkey_path.exists():
-                pubkey_path = _find_validator_key(sig_entry["validator_name"])
-            if pubkey_path is None:
-                click.echo(f"Warning: cannot find key for {sig_entry['validator_name']}, skipping", err=True)
-                continue
+            validator_did = sig_entry["validator_name"]
+            if explicit_keys:
+                pubkey_path = explicit_keys.get(validator_did)
+                if pubkey_path is None:
+                    click.echo(f"Warning: no --validator key provided for {validator_did}, skipping", err=True)
+                    continue
+            else:
+                pubkey_path = _find_validator_key(validator_did)
+                if pubkey_path is None:
+                    click.echo(f"Warning: cannot find key for {validator_did}, skipping", err=True)
+                    continue
             node = ValidatorNode.from_key_file(pubkey_path)
             if node.verify(bytes.fromhex(sig_entry["signature_hex"]), payload):
-                valid_sigs.append(sig_entry["validator_name"])
+                valid_sigs.append(validator_did)
+            else:
+                click.echo(f"Warning: signature invalid for {validator_did}", err=True)
         except Exception as e:
             click.echo(f"Warning: signature verification failed for {sig_entry['validator_name']}: {e}", err=True)
 

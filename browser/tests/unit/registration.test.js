@@ -91,12 +91,12 @@ describe('DecPKIRegistration.register()', () => {
     await expect(reg.register()).rejects.toBeInstanceOf(RegistrationCancelledError);
   });
 
-  it('throws AlgorithmNotSupportedError on BFF 422 with alg -8 message', async () => {
+  it('throws AlgorithmNotSupportedError on BFF 422 with unsupported algorithm message', async () => {
     const { startRegistration } = await import('@simplewebauthn/browser');
     startRegistration.mockResolvedValue(CREDENTIAL);
     mockFetch([
       jsonResponse(START_RESPONSE),
-      jsonResponse({ detail: 'Only ed25519 credentials (COSE alg -8) are accepted.' }, 422),
+      jsonResponse({ detail: 'Unsupported COSE algorithm: -257.' }, 422),
     ]);
 
     const reg = new DecPKIRegistration({ bffBaseUrl: 'http://localhost:8000/enrolment' });

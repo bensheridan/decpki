@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const DIST_DIR = join(__dirname, '..', 'dist');
 const SRC_DIR = join(__dirname, '..', 'src');
+const NODE_MODULES_DIR = join(__dirname, '..', 'node_modules');
 const BUNDLE_PATH = process.env.BUNDLE_PATH || '/tmp/bundle.cbor';
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const BFF_PORT = parseInt(process.env.BFF_PORT || '8000', 10);
@@ -24,7 +25,7 @@ createServer((req, res) => {
   const pathname = url.pathname;
 
   // Proxy /enrolment/*, /login/*, and /api/* to the BFF
-  if (pathname.startsWith('/enrolment') || pathname.startsWith('/login') || pathname.startsWith('/api')) {
+  if (pathname.startsWith('/enrolment') || pathname.startsWith('/login/') || pathname === '/login' || pathname.startsWith('/api')) {
     const options = {
       hostname: '127.0.0.1',
       port: BFF_PORT,
@@ -79,6 +80,20 @@ createServer((req, res) => {
     const html = readFileSync(join(__dirname, 'sessions.html'));
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(html);
+    return;
+  }
+
+  // Serve npm packages for browser import maps
+  if (pathname.startsWith('/npm/')) {
+    const pkgFile = join(NODE_MODULES_DIR, pathname.replace(/^\/npm\//, ''));
+    if (existsSync(pkgFile)) {
+      const data = readFileSync(pkgFile);
+      const ext = extname(pkgFile);
+      res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/javascript' });
+      res.end(data);
+      return;
+    }
+    res.writeHead(404); res.end('Not found');
     return;
   }
 

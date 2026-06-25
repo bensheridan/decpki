@@ -91,7 +91,8 @@ def test_start_returns_options(client):
     assert data["request_type"] == "new"
     assert data["pending_did"].startswith("did:local:")
     assert "challenge" in data
-    assert data["pubKeyCredParams"] == [{"type": "public-key", "alg": -8}]
+    assert {"type": "public-key", "alg": -8} in data["pubKeyCredParams"]
+    assert {"type": "public-key", "alg": -7} in data["pubKeyCredParams"]
 
 
 def test_submit_new_registration(client):
@@ -143,12 +144,13 @@ def test_duplicate_credential_rejected(client):
     assert resp.status_code == 409
 
 
-def test_wrong_algorithm_rejected(client):
+def test_unsupported_algorithm_rejected(client):
     start_resp = client.post("/enrolment/start")
     start = start_resp.json()
 
-    p256_key = {1: 2, 3: -7, -1: 1, -2: b"\x00" * 32, -3: b"\x00" * 32}
-    att_b64 = _make_attestation_b64(p256_key)
+    # alg -257 is not ed25519 (-8) or ES256 (-7) — should be rejected
+    unknown_alg_key = {1: 3, 3: -257, -1: b"\x00" * 32}
+    att_b64 = _make_attestation_b64(unknown_alg_key)
     client_data = json.dumps({
         "type": "webauthn.create",
         "challenge": start["challenge"],
@@ -169,7 +171,7 @@ def test_wrong_algorithm_rejected(client):
         "ownership_assertion": None,
     })
     assert resp.status_code == 422
-    assert "ed25519" in resp.json()["detail"]
+    assert "Unsupported COSE algorithm" in resp.json()["detail"]
 
 
 def test_list_requests(client):

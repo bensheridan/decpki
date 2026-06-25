@@ -8,6 +8,8 @@ import time
 import uuid
 
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric.ec import ECDSA, EllipticCurvePublicNumbers, SECP256R1
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from jose import jwt, JWTError  # noqa: F401 (re-export for callers)
 
@@ -35,7 +37,7 @@ class SessionStore:
 
     # --- challenge store ---
 
-    def create_challenge(self, did: str, credential_id: str, public_key_hex: str) -> str:
+    def create_challenge(self, did: str, credential_id: str, public_key_hex: str, algorithm: str = "ed25519") -> str:
         raw = secrets.token_bytes(32)
         challenge_hex = raw.hex()
         now = int(time.time())
@@ -43,6 +45,7 @@ class SessionStore:
             "did": did,
             "credential_id": credential_id,
             "public_key_hex": public_key_hex,
+            "algorithm": algorithm,
             "issued_at": now,
             "expires_at": now + 60,
         }
@@ -153,11 +156,12 @@ def verify_assertion(
     signature_b64: str,
     public_key_hex: str,
     expected_challenge_hex: str,
+    algorithm: str = "ed25519",
 ) -> bool:
-    """Verify a WebAuthn assertion against a stored ed25519 public key.
+    """Verify a WebAuthn assertion against a stored public key.
 
+    Supports algorithm="ed25519" and algorithm="es256".
     Verification data = authenticatorData || SHA-256(clientDataJSON) per W3C spec.
-    expected_challenge_hex is the raw challenge bytes as hex (as stored in SessionStore).
     """
     try:
         auth_data = _b64url_decode(authenticator_data_b64)
@@ -168,7 +172,6 @@ def verify_assertion(
         if client_data.get("type") != "webauthn.get":
             return False
 
-        # challenge in clientDataJSON is base64url of the raw challenge bytes
         recv_challenge_b64 = client_data.get("challenge", "")
         recv_challenge_hex = _b64url_decode(recv_challenge_b64).hex()
         if recv_challenge_hex != expected_challenge_hex:
@@ -176,8 +179,16 @@ def verify_assertion(
 
         verification_data = auth_data + hashlib.sha256(client_data_raw).digest()
 
-        pub_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
-        pub_key.verify(sig_bytes, verification_data)
+        if algorithm == "es256":
+            pub_bytes = bytes.fromhex(public_key_hex)  # 65-byte uncompressed point
+            x = int.from_bytes(pub_bytes[1:33], "big")
+            y = int.from_bytes(pub_bytes[33:65], "big")
+            pub_key = EllipticCurvePublicNumbers(x=x, y=y, curve=SECP256R1()).public_key()
+            pub_key.verify(sig_bytes, verification_data, ECDSA(hashes.SHA256()))
+        else:
+            pub_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
+            pub_key.verify(sig_bytes, verification_data)
+
         return True
     except (InvalidSignature, Exception):
         return False
