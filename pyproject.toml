@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "decpki"
 version = "0.1.0"
 description = "Decentralized PKI prototype: offline trust bundles with validator quorum"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 dependencies = [
     "cbor2>=5.6",

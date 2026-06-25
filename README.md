@@ -1,5 +1,7 @@
 # decpki — Decentralized PKI Prototype
 
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 Offline-capable identity verification using a multi-validator trust bundle instead of a Certificate Authority.
 
 Clients verify service identities with **zero network calls** — a signed CBOR file replaces the CA.
@@ -67,12 +69,50 @@ decpki verify --bundle bundle.cbor --did did:local:payments-svc
 
 No network required. The bundle file is the only input.
 
+## FIDO2 Registration (Passkeys)
+
+Users can register a passkey (hardware-backed credential) and enrol it into the trust chain via a BFF + validator co-signing pipeline. Once enrolled, the identity verifies offline like any other.
+
+See [specs/004-fido2-registration/quickstart.md](specs/004-fido2-registration/quickstart.md) for full step-by-step scenarios including:
+
+- New user registration via browser passkey prompt
+- Adding a second device to an existing DID
+- Algorithm enforcement (ed25519 only — non-ed25519 credentials rejected at the BFF)
+- Expired request handling
+- Duplicate credential rejection
+
+**Quick version**:
+
+```bash
+# 1. Start the BFF
+cd bff && pip install -r requirements.txt
+uvicorn main:app --port 8000
+
+# 2. Start the browser demo server (separate terminal)
+cd browser && BUNDLE_PATH=/tmp/bundle.cbor node demo/server.mjs
+
+# 3. Open http://localhost:3000/register.html — click Register, authenticate with biometric/PIN
+
+# 4. Co-sign via CLI (two validators required)
+decpki enrol-sign --request /tmp/decpki-enrolments/<request-id>.json --validator /tmp/alpha.key.json
+decpki enrol-sign --request /tmp/decpki-enrolments/<request-id>.json --validator /tmp/beta.key.json
+decpki enrol-promote --request /tmp/decpki-enrolments/<request-id>.json --threshold 2
+
+# 5. Regenerate bundle and verify
+decpki bundle --validator /tmp/alpha.key.json --validator /tmp/beta.key.json --validator /tmp/gamma.key.json --threshold 2 --grace 24h --out /tmp/bundle.cbor
+```
+
+See [browser/README.md](browser/README.md) for the `DecPKIRegistration` JS API.
+
 ## CLI reference
 
 | Command | Description |
 |---------|-------------|
 | `decpki keygen --name <name>` | Generate a validator keypair |
-| `decpki register --did <did> --pubkey <hex> --validator <key.json> ...` | Register an identity |
+| `decpki register --did <did> --pubkey <hex> --validator <key.json> ...` | Register an identity (manual) |
+| `decpki enrol-sign --request <file> --validator <key.json>` | Co-sign a FIDO2 enrolment request |
+| `decpki enrol-promote --request <file> --threshold <n>` | Promote a fully signed enrolment to the ledger |
+| `decpki enrol-revoke --did <did> --validator <key.json> ...` | Revoke an identity credential |
 | `decpki bundle --validator <key.json> ... --grace <24h\|7d\|3600s>` | Generate a signed bundle |
 | `decpki verify --bundle <file> --did <did>` | Verify a DID (offline) |
 | `decpki inspect --bundle <file>` | Print bundle contents |
@@ -141,11 +181,26 @@ pytest
 
 ```
 src/decpki/       # Library: models, merkle, bundle, quorum, verify
-cli/              # CLI entry point (click)
+cli/              # CLI entry point (click) + enrolment commands
+bff/              # FIDO2 enrolment BFF (FastAPI)
+browser/          # Browser offline client (Service Worker + IndexedDB)
 tests/            # unit/, integration/, contract/
-specs/            # Design documents, data model, contracts, quickstart
+specs/            # Design documents, data model, contracts, quickstarts
+  001-bundle-format-validator-quorum/
+  002-docker-compose-offline-demo/
+  003-browser-offline-client/
+  004-fido2-registration/
 ```
 
 ## Status
 
-Prototype — see [specs/001-bundle-format-validator-quorum/](specs/001-bundle-format-validator-quorum/) for the full design and implementation plan. Open problems (FIPS compliance, production networking, HSM key storage) are documented in the design doc.
+Prototype — four features implemented:
+
+| Feature | Description |
+|---------|-------------|
+| [001](specs/001-bundle-format-validator-quorum/) | Bundle format, validator quorum, Python CLI |
+| [002](specs/002-docker-compose-offline-demo/) | Docker Compose offline demo |
+| [003](specs/003-browser-offline-client/) | Browser offline client (Service Worker + IndexedDB) |
+| [004](specs/004-fido2-registration/) | FIDO2 passkey registration + chain enrolment |
+
+Open problems (FIPS compliance, production networking, HSM key storage) are documented in [decentralized-pki-design.md](decentralized-pki-design.md).
