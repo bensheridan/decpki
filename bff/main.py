@@ -389,3 +389,24 @@ def login_logout(body: LoginLogoutRequest):
     """Invalidate refresh token (idempotent)."""
     _session_store.revoke_refresh_token(body.refresh_token)
     return {"ok": True}
+
+
+# ── Protected resource endpoint (Feature 006) ─────────────────────────────────
+
+@app.get("/api/me")
+def api_me(authorization: str | None = Header(default=None)):
+    """Return identity info for the authenticated session."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = authorization[len("Bearer "):]
+    try:
+        payload = _session_store.verify_session_token(token)
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    did = payload["sub"]
+    return {
+        "did": did,
+        "issued_at": payload["iat"],
+        "expires_at": payload["exp"],
+        "message": f"Hello, {did}",
+    }

@@ -189,6 +189,19 @@ SESSION_SECRET=your-secret-min-32-chars uvicorn main:app --port 8000
 
 **Full validation scenarios**: see [`../specs/005-bff-session-issuance/quickstart.md`](../specs/005-bff-session-issuance/quickstart.md).
 
+**Protected resource**: once logged in, use `getToken()` to call `GET /api/me` on the BFF — the standard pattern for accessing any protected endpoint:
+
+```js
+const token = await session.getToken();
+const r = await fetch('http://localhost:8000/api/me', {
+  headers: { 'Authorization': `Bearer ${token}` },
+});
+const me = await r.json();
+// { did, issued_at, expires_at, message }
+```
+
+The login demo at `/login.html` does exactly this when you click **Call Protected Endpoint**.
+
 ## Bundle sync
 
 The Service Worker automatically syncs when:

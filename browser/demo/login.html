@@ -92,14 +92,15 @@
       const token = await session.getToken();
       if (!token) { setStatus('No active session token.', 'error'); return; }
       try {
-        const r = await fetch('/login/verify', {
+        const r = await fetch('/api/me', {
           headers: { 'Authorization': `Bearer ${token}` },
         });
         const body = await r.json();
         if (r.ok) {
           setStatus(`Protected endpoint response:\n${JSON.stringify(body, null, 2)}`, 'ok');
         } else {
-          setStatus(`Error ${r.status}: ${JSON.stringify(body)}`, 'error');
+          const msg = body?.detail || `Request rejected (HTTP ${r.status})`;
+          setStatus(`Error: ${msg}`, 'error');
         }
       } catch (e) {
         setStatus(`Fetch error: ${e.message}`, 'error');

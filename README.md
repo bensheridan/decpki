@@ -12,6 +12,9 @@ Clients verify service identities with **zero network calls** — a signed CBOR 
 2. Validators co-sign a **trust bundle** — a CBOR snapshot of all active identities with SHA-256 Merkle inclusion proofs
 3. Clients verify any identity against the bundle using only local computation (no OCSP, no CRL, no live chain query)
 4. Bundle expiry defines the maximum revocation lag (default 24 hours)
+5. Users register a FIDO2 passkey → validators co-sign the enrolment → the identity enters the bundle
+6. Users log in via WebAuthn assertion → BFF verifies against bundle → issues a JWT session token
+7. Session token is used to access protected resources (e.g. `GET /api/me`)
 
 See [decentralized-pki-design.md](decentralized-pki-design.md) for the full design rationale.
 
@@ -232,5 +235,6 @@ Prototype — five features implemented:
 | [003](specs/003-browser-offline-client/) | Browser offline client (Service Worker + IndexedDB) |
 | [004](specs/004-fido2-registration/) | FIDO2 passkey registration + chain enrolment |
 | [005](specs/005-bff-session-issuance/) | FIDO2 login — JWT session tokens, silent refresh, logout |
+| [006](specs/006-protected-resource-demo/) | Protected resource demo — `GET /api/me` closes the register → login → access loop |
 
 Open problems (FIPS compliance, production networking, HSM key storage) are documented in [decentralized-pki-design.md](decentralized-pki-design.md).

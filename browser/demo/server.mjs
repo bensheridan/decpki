@@ -23,8 +23,8 @@ createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const pathname = url.pathname;
 
-  // Proxy /enrolment/* and /login/* to the BFF
-  if (pathname.startsWith('/enrolment') || pathname.startsWith('/login')) {
+  // Proxy /enrolment/*, /login/*, and /api/* to the BFF
+  if (pathname.startsWith('/enrolment') || pathname.startsWith('/login') || pathname.startsWith('/api')) {
     const options = {
       hostname: '127.0.0.1',
       port: BFF_PORT,
