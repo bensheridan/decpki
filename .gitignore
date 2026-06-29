@@ -16,3 +16,4 @@ identity_log.json
 *.swp
 .idea/
 .vscode/
+browser/package-lock.json

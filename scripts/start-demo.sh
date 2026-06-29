@@ -14,7 +14,8 @@ done
 
 # Prerequisite checks
 require_cmd python3   "Install Python 3.11+ from https://python.org"
-require_cmd node      "Install Node.js 18+ from https://nodejs.org"
+require_cmd node      "Install Node.js 24+ from https://nodejs.org"
+require_cmd pnpm      "Run: corepack enable pnpm  (Node 24 includes corepack)"
 require_cmd uvicorn   "Run: pip install -r bff/requirements.txt"
 require_cmd decpki    "Run: pip install -e . from the repo root"
 

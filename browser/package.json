@@ -6,6 +6,10 @@
   "main": "dist/decpki-client.iife.js",
   "module": "dist/decpki-client.mjs",
   "types": "src/index.d.ts",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "packageManager": "pnpm@10.28.1",
   "files": [
     "dist/",
     "src/index.d.ts"
@@ -23,9 +27,9 @@
     "idb": "^8.0.0"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^1.6.1",
+    "@vitest/coverage-v8": "^4.1.9",
     "esbuild": "^0.28.1",
-    "happy-dom": "^14.12.3",
-    "vitest": "^1.6.1"
+    "happy-dom": "^20.10.6",
+    "vitest": "^4.1.9"
   }
 }

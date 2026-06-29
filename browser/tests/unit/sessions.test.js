@@ -174,7 +174,7 @@ describe('DecPKISessions.addDevice()', () => {
   it('returns result on success', async () => {
     const mockResult = { requestId: 'req-1', did: 'did:local:test-123', status: 'pending', threshold: 2, signaturesCollected: 0 };
     const mockAddCredential = vi.fn().mockResolvedValue(mockResult);
-    DecPKIRegistration.mockImplementation(() => ({ addCredential: mockAddCredential }));
+    DecPKIRegistration.mockImplementation(function() { return { addCredential: mockAddCredential }; });
 
     const s = makeSessions();
     const result = await s.addDevice();
@@ -183,17 +183,17 @@ describe('DecPKISessions.addDevice()', () => {
   });
 
   it('throws AddDeviceCancelledError on RegistrationCancelledError', async () => {
-    DecPKIRegistration.mockImplementation(() => ({
-      addCredential: vi.fn().mockRejectedValue(new RegistrationCancelledError()),
-    }));
+    DecPKIRegistration.mockImplementation(function() {
+      return { addCredential: vi.fn().mockRejectedValue(new RegistrationCancelledError()) };
+    });
     const s = makeSessions();
     await expect(s.addDevice()).rejects.toBeInstanceOf(AddDeviceCancelledError);
   });
 
   it('throws AddDeviceError on other registration errors', async () => {
-    DecPKIRegistration.mockImplementation(() => ({
-      addCredential: vi.fn().mockRejectedValue(new Error('Device not supported')),
-    }));
+    DecPKIRegistration.mockImplementation(function() {
+      return { addCredential: vi.fn().mockRejectedValue(new Error('Device not supported')) };
+    });
     const s = makeSessions();
     await expect(s.addDevice()).rejects.toBeInstanceOf(AddDeviceError);
   });

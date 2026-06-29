@@ -29,7 +29,7 @@ pip install -e .
 pip install -r bff/requirements.txt
 
 # Install browser demo dependencies
-cd browser && npm install && cd ..
+cd browser && pnpm install && cd ..
 
 # One-time: generate validator keypairs + trust bundle
 bash scripts/setup-validators.sh
