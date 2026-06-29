@@ -1,4 +1,15 @@
-"""FIDO2 Enrolment BFF — FastAPI application."""
+"""FIDO2 Enrolment BFF — FastAPI application.
+
+Environment variables
+---------------------
+SESSION_SECRET          : HS256 signing key (required, min 32 chars)
+SESSION_LIFETIME_SECONDS: JWT lifetime (default 900)
+REFRESH_LIFETIME_SECONDS: refresh token lifetime (default 604800)
+BFF_STORE_PATH          : SQLite database path (default /tmp/decpki-bff.db);
+                          set to ':memory:' for a transient in-memory store
+BUNDLE_PATH             : path to the trust bundle CBOR file
+ENROLMENT_DIR           : enrolment request directory (default /tmp/decpki-enrolments)
+"""
 import base64
 import hashlib
 import json
@@ -18,7 +29,7 @@ from pydantic import BaseModel
 from bundle_cache import BundleCache
 from cose import extract_pubkey
 from enrolment import DuplicateCredentialError, EnrolmentStore
-from session import SessionStore, verify_assertion
+from session import SessionStore, SqliteSessionStore, verify_assertion
 
 
 _THRESHOLD = int(os.environ.get("THRESHOLD", "2"))
@@ -28,7 +39,7 @@ _ORIGIN = os.environ.get("ORIGIN", f"http://{_RP_ID}")
 
 _store: EnrolmentStore | None = None
 _bundle_cache: BundleCache | None = None
-_session_store: SessionStore | None = None
+_session_store: SqliteSessionStore | None = None
 _challenges: dict[str, dict] = {}
 _nonces: dict[str, dict] = {}
 
@@ -38,7 +49,7 @@ async def lifespan(app: FastAPI):
     global _store, _bundle_cache, _session_store
     _store = EnrolmentStore(threshold=_THRESHOLD)
     _bundle_cache = BundleCache()
-    _session_store = SessionStore()
+    _session_store = SqliteSessionStore()
     _bundle_cache.start()
     yield
 

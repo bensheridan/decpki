@@ -2,7 +2,6 @@
 import json
 import os
 import time
-import unittest
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,24 +9,28 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("SESSION_SECRET", "testsecret-32-bytes-minimum-xxxx")
 os.environ.setdefault("BUNDLE_PATH", "/tmp/nonexistent-bundle-for-tests.cbor")
 
-from session import SessionStore
+from session import SqliteSessionStore
 
 
-# ── SessionStore unit tests ───────────────────────────────────────────────────
+# ── SqliteSessionStore unit tests ─────────────────────────────────────────────
 
-class TestSessionStoreExtensions:
+class TestSqliteSessionStore:
     def setup_method(self):
-        self.store = SessionStore()
+        self.store = SqliteSessionStore(path=":memory:")
 
-    def test_issue_refresh_token_populates_sessions_by_did(self):
+    def teardown_method(self):
+        self.store.close()
+
+    def test_issue_refresh_token_appears_in_list_sessions(self):
         token, _ = self.store.issue_refresh_token("did:test:1")
-        assert "did:test:1" in self.store._sessions_by_did
-        assert token in self.store._sessions_by_did["did:test:1"]
+        sessions = self.store.list_sessions("did:test:1")
+        assert any(s["session_id"] == token[:16] for s in sessions)
 
-    def test_revoke_refresh_token_removes_from_sessions_by_did(self):
+    def test_revoke_refresh_token_removes_from_list_sessions(self):
         token, _ = self.store.issue_refresh_token("did:test:1")
         self.store.revoke_refresh_token(token)
-        assert token not in self.store._sessions_by_did.get("did:test:1", set())
+        sessions = self.store.list_sessions("did:test:1")
+        assert all(s["session_id"] != token[:16] for s in sessions)
 
     def test_is_jti_revoked_returns_false_for_unknown(self):
         assert self.store.is_jti_revoked("nonexistent-jti") is False
@@ -51,8 +54,12 @@ class TestSessionStoreExtensions:
 
     def test_list_sessions_skips_expired_entries(self):
         token, _ = self.store.issue_refresh_token("did:test:3")
-        # Manually expire the entry
-        self.store._refresh_tokens[token]["expires_at"] = int(time.time()) - 1
+        # Force-expire the row directly in SQLite
+        self.store._conn.execute(
+            "UPDATE refresh_tokens SET expires_at = ? WHERE token_hex = ?",
+            (int(time.time()) - 1, token),
+        )
+        self.store._conn.commit()
         sessions = self.store.list_sessions("did:test:3")
         assert sessions == []
 
@@ -74,13 +81,15 @@ class TestSessionStoreExtensions:
 
     def test_issue_session_token_updates_last_jti(self):
         token, _ = self.store.issue_refresh_token("did:test:5")
-        assert self.store._refresh_tokens[token]["last_jti"] == ""
+        entry_before = self.store.consume_refresh_token(token)
+        assert entry_before["last_jti"] == ""
         self.store.issue_session_token("did:test:5", refresh_token_hex=token)
-        assert self.store._refresh_tokens[token]["last_jti"] != ""
+        entry_after = self.store.consume_refresh_token(token)
+        assert entry_after["last_jti"] != ""
 
     def test_multiple_sessions_for_same_did(self):
-        t1, _ = self.store.issue_refresh_token("did:test:6")
-        t2, _ = self.store.issue_refresh_token("did:test:6")
+        self.store.issue_refresh_token("did:test:6")
+        self.store.issue_refresh_token("did:test:6")
         sessions = self.store.list_sessions("did:test:6")
         assert len(sessions) == 2
 
@@ -96,8 +105,8 @@ def client_with_session():
     did = "did:local:test-sessions-007"
 
     with TestClient(app) as c:
-        # lifespan has run — now inject a fresh store and populate it
-        store = SessionStore()
+        # lifespan has run — now inject a fresh in-memory store and populate it
+        store = SqliteSessionStore(path=":memory:")
         main_module._session_store = store
 
         refresh_token, _ = store.issue_refresh_token(did)
@@ -105,26 +114,24 @@ def client_with_session():
 
         yield c, session_token, refresh_token, did
 
+        store.close()
+
 
 class TestSessionsEndpoint:
-    def test_get_sessions_requires_auth(self, client_with_session):
+    def test_post_sessions_requires_auth(self, client_with_session):
         client, _, refresh_token, _ = client_with_session
-        r = client.request(
-            "GET", "/api/sessions",
-            data=json.dumps({"refresh_token": refresh_token}),
-            headers={"Content-Type": "application/json"},
+        r = client.post(
+            "/api/sessions",
+            json={"refresh_token": refresh_token},
         )
         assert r.status_code == 401
 
-    def test_get_sessions_returns_list(self, client_with_session):
+    def test_post_sessions_returns_list(self, client_with_session):
         client, session_token, refresh_token, did = client_with_session
-        r = client.request(
-            "GET", "/api/sessions",
-            data=json.dumps({"refresh_token": refresh_token}),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {session_token}",
-            },
+        r = client.post(
+            "/api/sessions",
+            json={"refresh_token": refresh_token},
+            headers={"Authorization": f"Bearer {session_token}"},
         )
         assert r.status_code == 200
         body = r.json()
@@ -156,12 +163,10 @@ class TestSessionsEndpoint:
     def test_revoked_session_token_rejected_on_api_me(self, client_with_session):
         client, session_token, refresh_token, _ = client_with_session
         session_id = refresh_token[:16]
-        # Revoke the session
         client.delete(
             f"/api/sessions/{session_id}",
             headers={"Authorization": f"Bearer {session_token}"},
         )
-        # The same token should now be rejected
         r = client.get("/api/me", headers={"Authorization": f"Bearer {session_token}"})
         assert r.status_code == 401
         assert "revoked" in r.json()["detail"].lower()
@@ -173,8 +178,6 @@ class TestSessionsEndpoint:
             f"/api/sessions/{session_id}",
             headers={"Authorization": f"Bearer {session_token}"},
         )
-        r = client.get("/api/login/verify", headers={"Authorization": f"Bearer {session_token}"})
-        # /login/verify path is /login/verify
         r2 = client.get("/login/verify", headers={"Authorization": f"Bearer {session_token}"})
         assert r2.status_code == 401
         assert "revoked" in r2.json()["detail"].lower()

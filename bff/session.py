@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import secrets
+import sqlite3
+import threading
 import time
 import uuid
 
@@ -145,6 +147,201 @@ class SessionStore:
                 last_jti = entry.get("last_jti", "")
                 if last_jti:
                     self._jti_blocklist.add(last_jti)
+                self.revoke_refresh_token(token_hex)
+                return True, token_hex
+        return False, None
+
+
+class SqliteSessionStore:
+    """Drop-in replacement for SessionStore backed by SQLite for restart-safe persistence."""
+
+    def __init__(self, path: str | None = None):
+        self._path = path or os.environ.get("BFF_STORE_PATH", "/tmp/decpki-bff.db")
+        self._conn = sqlite3.connect(self._path, check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._lock = threading.Lock()
+        self._init_schema()
+        self._prune_expired()
+        print(f"[session-store] using SQLite at {self._path}", flush=True)
+
+    def close(self):
+        self._conn.close()
+
+    # ── schema ────────────────────────────────────────────────────────────────
+
+    def _init_schema(self):
+        with self._conn:
+            self._conn.executescript("""
+                CREATE TABLE IF NOT EXISTS challenges (
+                    challenge_hex  TEXT PRIMARY KEY,
+                    did            TEXT NOT NULL,
+                    credential_id  TEXT NOT NULL,
+                    public_key_hex TEXT NOT NULL,
+                    algorithm      TEXT NOT NULL DEFAULT 'ed25519',
+                    issued_at      INTEGER NOT NULL,
+                    expires_at     INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS refresh_tokens (
+                    token_hex  TEXT PRIMARY KEY,
+                    did        TEXT NOT NULL,
+                    issued_at  INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    last_jti   TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS idx_rt_did ON refresh_tokens(did);
+                CREATE TABLE IF NOT EXISTS jti_blocklist (
+                    jti          TEXT PRIMARY KEY,
+                    added_at     INTEGER NOT NULL,
+                    original_exp INTEGER NOT NULL
+                );
+            """)
+
+    def _prune_expired(self):
+        now = int(time.time())
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM challenges WHERE expires_at < ?", (now,))
+            self._conn.execute("DELETE FROM refresh_tokens WHERE expires_at < ?", (now,))
+            self._conn.execute("DELETE FROM jti_blocklist WHERE original_exp < ?", (now,))
+
+    # ── challenge store ───────────────────────────────────────────────────────
+
+    def create_challenge(self, did: str, credential_id: str, public_key_hex: str, algorithm: str = "ed25519") -> str:
+        raw = secrets.token_bytes(32)
+        challenge_hex = raw.hex()
+        now = int(time.time())
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO challenges VALUES (?,?,?,?,?,?,?)",
+                (challenge_hex, did, credential_id, public_key_hex, algorithm, now, now + 60),
+            )
+        return challenge_hex
+
+    def consume_challenge(self, challenge_hex: str) -> dict | None:
+        now = int(time.time())
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT did, credential_id, public_key_hex, algorithm, issued_at, expires_at "
+                "FROM challenges WHERE challenge_hex = ?",
+                (challenge_hex,),
+            ).fetchone()
+            if row is None:
+                return None
+            self._conn.execute("DELETE FROM challenges WHERE challenge_hex = ?", (challenge_hex,))
+        did, credential_id, public_key_hex, algorithm, issued_at, expires_at = row
+        if now > expires_at:
+            return None
+        return {
+            "did": did,
+            "credential_id": credential_id,
+            "public_key_hex": public_key_hex,
+            "algorithm": algorithm,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        }
+
+    # ── session tokens ────────────────────────────────────────────────────────
+
+    def issue_session_token(self, did: str, refresh_token_hex: str | None = None) -> tuple[str, int]:
+        secret = os.environ.get("SESSION_SECRET", _SESSION_SECRET)
+        if not secret:
+            raise RuntimeError("SESSION_SECRET env var is required")
+        lifetime = int(os.environ.get("SESSION_LIFETIME_SECONDS", str(_SESSION_LIFETIME)))
+        now = int(time.time())
+        exp = now + lifetime
+        jti = str(uuid.uuid4())
+        payload = {"sub": did, "jti": jti, "iat": now, "exp": exp, "type": "session"}
+        token = jwt.encode(payload, secret, algorithm=_ALGORITHM)
+        if refresh_token_hex:
+            with self._lock, self._conn:
+                self._conn.execute(
+                    "UPDATE refresh_tokens SET last_jti = ? WHERE token_hex = ?",
+                    (jti, refresh_token_hex),
+                )
+        return token, exp
+
+    def verify_session_token(self, token: str) -> dict:
+        secret = os.environ.get("SESSION_SECRET", _SESSION_SECRET)
+        return jwt.decode(token, secret, algorithms=[_ALGORITHM])
+
+    # ── refresh tokens ────────────────────────────────────────────────────────
+
+    def issue_refresh_token(self, did: str) -> tuple[str, int]:
+        raw = secrets.token_bytes(32)
+        token = raw.hex()
+        now = int(time.time())
+        lifetime = int(os.environ.get("REFRESH_LIFETIME_SECONDS", str(_REFRESH_LIFETIME)))
+        exp = now + lifetime
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO refresh_tokens VALUES (?,?,?,?,?)",
+                (token, did, now, exp, ""),
+            )
+        return token, exp
+
+    def consume_refresh_token(self, token: str) -> dict | None:
+        now = int(time.time())
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT did, issued_at, expires_at, last_jti FROM refresh_tokens WHERE token_hex = ?",
+                (token,),
+            ).fetchone()
+        if row is None:
+            return None
+        did, issued_at, expires_at, last_jti = row
+        if now > expires_at:
+            return None
+        return {"did": did, "issued_at": issued_at, "expires_at": expires_at, "last_jti": last_jti}
+
+    def revoke_refresh_token(self, token: str):
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM refresh_tokens WHERE token_hex = ?", (token,))
+
+    # ── jti blocklist ─────────────────────────────────────────────────────────
+
+    def is_jti_revoked(self, jti: str) -> bool:
+        now = int(time.time())
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM jti_blocklist WHERE jti = ? AND original_exp > ?", (jti, now)
+            ).fetchone()
+        return row is not None
+
+    # ── session listing and revocation ────────────────────────────────────────
+
+    def list_sessions(self, did: str) -> list[dict]:
+        now = int(time.time())
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT token_hex, issued_at, expires_at, last_jti FROM refresh_tokens "
+                "WHERE did = ? AND expires_at > ?",
+                (did, now),
+            ).fetchall()
+        return [
+            {
+                "session_id": r[0][:16],
+                "did": did,
+                "issued_at": r[1],
+                "expires_at": r[2],
+                "last_jti": r[3],
+            }
+            for r in rows
+        ]
+
+    def revoke_session(self, session_id: str) -> tuple[bool, str | None]:
+        now = int(time.time())
+        lifetime = int(os.environ.get("SESSION_LIFETIME_SECONDS", str(_SESSION_LIFETIME)))
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT token_hex, last_jti FROM refresh_tokens"
+            ).fetchall()
+        for token_hex, last_jti in rows:
+            if token_hex[:16] == session_id:
+                if last_jti:
+                    with self._lock, self._conn:
+                        self._conn.execute(
+                            "INSERT OR IGNORE INTO jti_blocklist VALUES (?,?,?)",
+                            (last_jti, now, now + lifetime),
+                        )
                 self.revoke_refresh_token(token_hex)
                 return True, token_hex
         return False, None

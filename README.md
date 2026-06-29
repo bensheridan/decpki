@@ -157,6 +157,48 @@ cd browser && BUNDLE_PATH=/tmp/bundle.cbor node demo/server.mjs
 #    — Click Add New Device to enrol a second passkey for the same DID
 ```
 
+## BFF configuration
+
+The BFF is configured entirely via environment variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `SESSION_SECRET` | *(required)* | HS256 signing key — minimum 32 characters |
+| `SESSION_LIFETIME_SECONDS` | `900` | JWT session token lifetime (15 min) |
+| `REFRESH_LIFETIME_SECONDS` | `604800` | Refresh token lifetime (7 days) |
+| `BFF_STORE_PATH` | `/tmp/decpki-bff.db` | SQLite database path — see below |
+| `BUNDLE_PATH` | `/tmp/bundle.cbor` | Trust bundle CBOR file |
+| `ENROLMENT_DIR` | `/tmp/decpki-enrolments` | Enrolment request directory |
+
+### Persistent session store (SQLite)
+
+The BFF stores all session state — refresh tokens, JTI blocklist, and login challenges — in a
+SQLite database so sessions survive process restarts.
+
+**Default location**: `/tmp/decpki-bff.db`
+
+```bash
+# Use the default path
+SESSION_SECRET=... uvicorn main:app --port 8000
+
+# Use a custom path (e.g. inside the project for easier inspection)
+BFF_STORE_PATH=./bff-sessions.db SESSION_SECRET=... uvicorn main:app --port 8000
+
+# Disable persistence (in-memory only — state lost on restart)
+BFF_STORE_PATH=:memory: SESSION_SECRET=... uvicorn main:app --port 8000
+```
+
+The database is created automatically on first start. You can delete it at any time to wipe all
+active sessions (all users will need to log in again). The file is a standard SQLite database and
+can be inspected with any SQLite client:
+
+```bash
+sqlite3 /tmp/decpki-bff.db ".tables"
+# challenges  jti_blocklist  refresh_tokens
+
+sqlite3 /tmp/decpki-bff.db "SELECT session_id, did, datetime(issued_at,'unixepoch') FROM refresh_tokens;"
+```
+
 ## CLI reference
 
 | Command | Description |
@@ -228,7 +270,7 @@ pip install pytest
 pytest
 ```
 
-24 tests covering unit (Merkle tree, models, CBOR), integration (end-to-end offline flow), and contract (all 5 verify outcomes, quorum threshold, expiry, tamper detection).
+56 BFF tests plus unit, integration, and contract tests covering Merkle tree, models, CBOR, enrolment, session management, and cross-restart persistence.
 
 ## Project layout
 
@@ -251,7 +293,7 @@ specs/            # Design documents, data model, contracts, quickstarts
 
 ## Status
 
-Prototype — seven features implemented:
+Prototype — eight features implemented:
 
 | Feature | Description |
 |---------|-------------|
@@ -262,5 +304,6 @@ Prototype — seven features implemented:
 | [005](specs/005-bff-session-issuance/) | FIDO2 login — JWT session tokens, silent refresh, logout |
 | [006](specs/006-protected-resource-demo/) | Protected resource demo — `GET /api/me` closes the register → login → access loop |
 | [007](specs/007-session-management/) | Session management — list active sessions, per-device revocation, add new passkey |
+| [008](specs/008-bff-persistent-storage/) | Persistent BFF storage — SQLite-backed sessions survive process restarts |
 
 Open problems (FIPS compliance, production networking, HSM key storage) are documented in [decentralized-pki-design.md](decentralized-pki-design.md).
