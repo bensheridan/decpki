@@ -21,11 +21,35 @@ See [decentralized-pki-design.md](decentralized-pki-design.md) for the full desi
 
 ## Quickstart
 
-**Requirements**: Python 3.11+
+**Requirements**: Python 3.11+, Node.js 18+
 
 ```bash
+# Install Python package and BFF dependencies
 pip install -e .
+pip install -r bff/requirements.txt
+
+# Install browser demo dependencies
+cd browser && npm install && cd ..
+
+# One-time: generate validator keypairs + trust bundle
+bash scripts/setup-validators.sh
+
+# Start BFF (port 8000) + demo server (port 3000)
+bash scripts/start-demo.sh
 ```
+
+Open [http://localhost:3000/register.html](http://localhost:3000/register.html) to register a passkey identity.
+
+After registering, promote the enrolment with:
+
+```bash
+bash scripts/promote-enrolment.sh <request-id>
+```
+
+Then log in at [http://localhost:3000/login.html](http://localhost:3000/login.html).
+
+<details>
+<summary>Manual steps (without scripts)</summary>
 
 ### 1. Generate validator keypairs
 
@@ -73,6 +97,8 @@ decpki verify --bundle bundle.cbor --did did:local:payments-svc
 
 No network required. The bundle file is the only input.
 
+</details>
+
 ## FIDO2 Registration (Passkeys)
 
 Users can register a passkey (hardware-backed credential) and enrol it into the trust chain via a BFF + validator co-signing pipeline. Once enrolled, the identity verifies offline like any other.
@@ -88,22 +114,16 @@ See [specs/004-fido2-registration/quickstart.md](specs/004-fido2-registration/qu
 **Quick version**:
 
 ```bash
-# 1. Start the BFF
-cd bff && pip install -r requirements.txt
-uvicorn main:app --port 8000
+# 1. Start both servers
+bash scripts/start-demo.sh
 
-# 2. Start the browser demo server (separate terminal)
-cd browser && BUNDLE_PATH=/tmp/bundle.cbor node demo/server.mjs
+# 2. Open http://localhost:3000/register.html — click Register, authenticate with biometric/PIN
+#    Note the Request ID shown on screen
 
-# 3. Open http://localhost:3000/register.html — click Register, authenticate with biometric/PIN
+# 3. Promote the enrolment (new terminal)
+bash scripts/promote-enrolment.sh <request-id>
 
-# 4. Co-sign via CLI (two validators required)
-decpki enrol-sign --request /tmp/decpki-enrolments/<request-id>.json --validator /tmp/alpha.key.json
-decpki enrol-sign --request /tmp/decpki-enrolments/<request-id>.json --validator /tmp/beta.key.json
-decpki enrol-promote --request /tmp/decpki-enrolments/<request-id>.json --threshold 2
-
-# 5. Regenerate bundle and verify
-decpki bundle --validator /tmp/alpha.key.json --validator /tmp/beta.key.json --validator /tmp/gamma.key.json --threshold 2 --grace 24h --out /tmp/bundle.cbor
+# 4. Log in at http://localhost:3000/login.html
 ```
 
 See [browser/README.md](browser/README.md) for the `DecPKIRegistration` JS API.
